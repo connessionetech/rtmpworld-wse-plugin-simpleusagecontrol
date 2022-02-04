@@ -1,0 +1,20 @@
+{
+    "constrains":{
+        "application":{
+            "max-allowed-bw-in": 0,
+            "max-allowed-bw-out": 0,
+            "notify-client-bw-usage": true,
+            "ingest":{
+                "max-publish-bitrate": 500,
+                "max-publishers": 10,
+                "max-publish-time": 60,
+                "allowed-publisher-types": ""
+            },
+            "egress":{
+                "max-subscribers-per-stream": 10,
+                "max-subscribe-time": 15,
+                "allowed-subscriber-types": ""
+            }
+        }        
+    }
+}
