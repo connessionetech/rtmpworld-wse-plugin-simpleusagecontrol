@@ -1,19 +1,24 @@
 {
     "constrains":{
         "application":{
-            "max-allowed-bw-in": 0,
-            "max-allowed-bw-out": 0,
-            "notify-client-bw-usage": true,
+            "enableRestrictions": true,
+            "maxBandwidthIn": 0,
+            "maxBandwidthOut": 0,
             "ingest":{
-                "max-publish-bitrate": 500,
-                "max-publishers": 10,
-                "max-publish-time": 60,
-                "allowed-publisher-types": ""
+                "maxPublishBitrate": 500,
+                "maxPublishersCount": 2,
+                "maxPublishTime": 60,
+                "allowedPublisherTypes": "",
+                "allowedFromGeo": [],
+                "restrictFromGeo": []
             },
             "egress":{
-                "max-subscribers-per-stream": 10,
-                "max-subscribe-time": 15,
-                "allowed-subscriber-types": ""
+                "maxSubscribers": 10,
+                "maxSubscribersPerStream": 10,
+                "maxPlaybackTime": 15,
+                "allowedSubscribersTypes": "",
+                "allowedFromGeo": [],
+                "restrictFromGeo": []
             }
         }        
     }
