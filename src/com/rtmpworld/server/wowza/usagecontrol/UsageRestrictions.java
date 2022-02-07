@@ -1,6 +1,6 @@
 package com.rtmpworld.server.wowza.usagecontrol;
 
-public class ApplicationUsageContrains {
+public class UsageRestrictions {
 	
 	public boolean enableRestrictions = false;
 	
