@@ -1,25 +1,21 @@
 {
-    "constrains":{
-        "application":{
-            "enableRestrictions": true,
-            "maxBandwidthIn": 0,
-            "maxBandwidthOut": 0,
-            "ingest":{
-                "maxPublishBitrate": 500,
-                "maxPublishersCount": 2,
-                "maxPublishTime": 60,
-                "allowedPublisherTypes": "",
-                "allowedFromGeo": [],
-                "restrictFromGeo": []
-            },
-            "egress":{
-                "maxSubscribers": 10,
-                "maxSubscribersPerStream": 10,
-                "maxPlaybackTime": 15,
-                "allowedSubscribersTypes": "",
-                "allowedFromGeo": [],
-                "restrictFromGeo": []
-            }
-        }        
-    }
+	"enableRestrictions": true,
+	"maxBytesIn": 0,
+	"maxBytesOut": 0,
+	"ingest": {
+		"maxPublishBitrate": 500,
+		"maxPublishersCount": 2,
+		"maxPublishTime": 60,
+		"allowedPublisherTypes": ["rtmp"],
+		"allowedFromGeo": [],
+		"restrictFromGeo": []
+	},
+	"egress": {
+		"maxSubscribers": 10,
+		"maxSubscribersPerStream": 10,
+		"maxPlaybackTime": 15,
+		"allowedSubscriberTypes": [],
+		"allowedFromGeo": [],
+		"restrictFromGeo": []
+	}
 }
