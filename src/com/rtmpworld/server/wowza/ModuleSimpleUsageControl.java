@@ -4,10 +4,26 @@ import com.wowza.wms.application.*;
 
 import java.io.File;
 import java.io.FileReader;
+import java.net.URL;
 import java.util.Date;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import org.apache.http.HttpEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 
 import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
@@ -23,15 +39,15 @@ import com.wowza.wms.stream.*;
 import com.wowza.wms.rtp.model.*;
 import com.wowza.wms.server.Server;
 import com.wowza.wms.httpstreamer.model.*;
-import com.wowza.wms.httpstreamer.cupertinostreaming.httpstreamer.*;
-import com.wowza.wms.httpstreamer.smoothstreaming.httpstreamer.*;
 import com.wowza.wms.logging.WMSLogger;
+import com.wowza.wms.logging.WMSLoggerFactory;
 import com.wowza.wms.logging.WMSLoggerIDs;
 
 public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	private IApplicationInstance appInstance;
 	private UsageRestrictions restrictions;	
+	private GeoInfoProvider geoInfoProvider;
 	private StreamListener streamListener = new StreamListener();
 	
 	
@@ -42,6 +58,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	// for logging
 	private static String PROP_DEBUG = PROP_NAME_PREFIX + "Debug";
 	private static String PROP_RESTRICTIONS_RULE_PATH = PROP_NAME_PREFIX + "RestrictionsRulePath";
+	private static String PROP_GEOINFO_ENDPOINT = PROP_NAME_PREFIX + "GeoInfoEndpoint";
 	private static String KEY_PUBLISHER = "PUBLISHER";
 	private static String KEY_PUBLISH_TIME = "PUBLISHTIME";
 	private static String KEY_PUBLISH_PROTOCOL = "PUBLISHPROTOCOL";
@@ -49,15 +66,154 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private static String KEY_SUBSCRIBE_TIME = "SUBSCRIBETIME";
 	private static String KEY_SUBSCRIBE_PROTOCOL = "SUBSCRIBEPROTOCOL";
 	
+	
+	// for threading
+	private static String PROP_THREADPOOL_SIZE = PROP_NAME_PREFIX + "ThreadPoolSize";
+	private static String PROP_DELAY_FOR_FAILED_REQUESTS = PROP_NAME_PREFIX + "DelayForFailedRequests";
+	private static String PROP_HTTP_MAX_FAIL_RETRIES = PROP_NAME_PREFIX + "HTTPMaxRetries";
+	private static String PROP_THREADPOOL_TERMINATION_TIMEOUT = PROP_NAME_PREFIX + "ThreadPoolTerminationTimeout";
+	
+	
+	private static ThreadPoolExecutor httpRequestThreadPool;
+	private static int threadPoolSize;
+	private static int threadIdleTimeout;	
+	private static int threadPoolAwaitTerminationTimeout;
+	private static int httpFailureRetries = 5;
+	
+	
 	private String restrictionsRulePath;	
+	private String geoInfoEndpoint;	
+	private boolean asyncGeoInfoFetch = false;
 	private boolean moduleDebug;
+	private static boolean serverDebug = false;
 	private Timer timer = null;
 
 	
 	private static WMSProperties serverProps = Server.getInstance().getProperties();
-	private WMSLogger logger;	
+	private WMSLogger logger;
 	
 	
+	static  
+	{
+		serverDebug = serverProps.getPropertyBoolean(PROP_DEBUG, false);
+		if (WMSLoggerFactory.getLogger(ModuleSimpleUsageControl.class).isDebugEnabled())
+			serverDebug = true;
+		
+		threadPoolSize = serverProps.getPropertyInt(PROP_THREADPOOL_SIZE, 5);
+		threadIdleTimeout = serverProps.getPropertyInt(PROP_DELAY_FOR_FAILED_REQUESTS, 60);
+		threadPoolAwaitTerminationTimeout = serverProps.getPropertyInt(PROP_THREADPOOL_TERMINATION_TIMEOUT, 5);
+		httpFailureRetries = serverProps.getPropertyInt(PROP_HTTP_MAX_FAIL_RETRIES, httpFailureRetries);
+		httpRequestThreadPool = new ThreadPoolExecutor(threadPoolSize, threadPoolSize, threadIdleTimeout, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
+		
+		Runtime.getRuntime().addShutdownHook(new Thread()
+		{
+			@Override
+			public void run()
+			{
+				try
+				{
+					if (serverDebug)
+						WMSLoggerFactory.getLogger(getClass()).info(MODULE_NAME + " Runtime.getRuntime().addShutdownHook");
+					httpRequestThreadPool.shutdown();
+					int threadPoolAwaitTerminationTimeout = serverProps.getPropertyInt(PROP_NAME_PREFIX + "ThreadPoolTerminationTimeout", 5);
+					if (!httpRequestThreadPool.awaitTermination(threadPoolAwaitTerminationTimeout, TimeUnit.SECONDS))
+						httpRequestThreadPool.shutdownNow();
+				}
+				catch (InterruptedException e)
+				{
+					// problem
+					WMSLoggerFactory.getLogger(ModuleSimpleUsageControl.class).error(MODULE_NAME + ".ShutdownHook.run() InterruptedException", e);
+				}
+			}
+		});
+	}
+	
+	
+	
+	private class GeoInfoProvider
+	{
+		private String apiEndPoint;
+		
+		public GeoInfoProvider(String apiEndPoint)
+		{
+			this.apiEndPoint = apiEndPoint;
+		}
+		
+		public String getCountry(String ipAddress)
+		{
+			return null;			
+		}
+		
+		
+		private CompletableFuture<CountryInfo> performIPLookUp(String ip)
+		{
+			return CompletableFuture.supplyAsync(()->{
+				CloseableHttpClient httpClient = HttpClients.createDefault();
+				CountryInfo info = null;
+				
+				try
+				{
+					String endpoint = apiEndPoint.replace("{ip}", ip);
+				    HttpGet httpPost = new HttpGet(endpoint);
+				    CloseableHttpResponse response = httpClient.execute(httpPost);
+				    HttpEntity entity = response.getEntity();
+		            if (entity != null) {
+		            	Gson gson = new Gson();
+		                String result = EntityUtils.toString(entity);
+		                if(moduleDebug){
+		                	getLogger().info(MODULE_NAME + ".performIPLookUp => Response : " + result);
+		                }
+		                
+		                if(!result.contains("country")) {
+		                	return null;
+		                }
+		                
+		                info = gson.fromJson(result, CountryInfo.class);
+		            }	            
+		            httpClient.close();
+				}
+				catch(Exception e)
+				{
+					getLogger().error(MODULE_NAME + ".performIPLookUp for => " + ip + ".Cause : " + e.getMessage());
+				}
+			    
+			    return info;		
+				
+			}, httpRequestThreadPool);
+		}
+		
+		
+		public CountryInfo getCountryInfoSync(CompletableFuture<CountryInfo> future)
+		{
+			CountryInfo result;
+			
+			try 
+			{
+				result = future.get(5000, TimeUnit.MILLISECONDS);
+			} 
+			catch (InterruptedException | ExecutionException | TimeoutException e) 
+			{
+				result = null;
+				getLogger().error("Error getting country info." + e.getMessage());
+				
+			}
+			
+			return result;
+		}
+	}
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	/**
+	 * Monitors IMediaStream instance
+	 *
+	 */
 	private class MonitorStream
 	{
 		int monitorInterval = 5000;
@@ -116,6 +272,44 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
+	private class GeoRestriction{
+		
+		private CountryInfo info;
+		private boolean checkByAllowed = false;
+		private boolean checkByRestricted = false;
+		
+		public GeoRestriction(){
+			
+		}
+		
+
+		public CountryInfo getInfo() {
+			return info;
+		}
+
+		public void setInfo(CountryInfo info) {
+			this.info = info;
+		}
+
+		public boolean isCheckByAllowed() {
+			return checkByAllowed;
+		}
+
+		public void setCheckByAllowed(boolean checkByAllowed) {
+			this.checkByAllowed = checkByAllowed;
+		}
+
+		public boolean isCheckByRestricted() {
+			return checkByRestricted;
+		}
+
+		public void setCheckByRestricted(boolean checkByRestricted) {
+			this.checkByRestricted = checkByRestricted;
+		}
+	}
+	
+	
 	private void validateApplicationBandwidthUsageRestrictions() throws UsageRestrictionException
 	{
 		IOPerformanceCounter perf = appInstance.getIOPerformanceCounter();
@@ -130,6 +324,69 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		if((restrictions.maxBytesOut>0) && (bytesOut > restrictions.maxBytesOut))
 		{
 			throw new UsageRestrictionException("Max bytes-Out restriction breached!!");
+		}
+	}
+	
+	
+	private void validateGeoRestrictions(StreamingSessionTarget target, List<String> allowedFrom, List<String> restrictedFrom) throws UsageRestrictionException
+	{
+		CountryInfo info;
+		final GeoRestriction georestriction = new GeoRestriction();
+		final String ip = target.getIPAddress();
+		
+		
+		if(allowedFrom != null && allowedFrom.size() > 0)
+		{
+			georestriction.setCheckByAllowed(true);
+		}
+		
+		if(restrictedFrom != null && restrictedFrom.size() > 0)
+		{
+			georestriction.setCheckByRestricted(true);
+		}
+		
+		if(georestriction.isCheckByAllowed() || georestriction.isCheckByRestricted())
+		{
+			CompletableFuture<CountryInfo> future = geoInfoProvider.performIPLookUp(ip);
+			if(this.asyncGeoInfoFetch)
+			{
+				info = this.geoInfoProvider.getCountryInfoSync(future);
+				String cc = (info.country_code != null)?info.country_code:info.countryCode;
+				if(georestriction.isCheckByAllowed())
+				{
+					if(!allowedFrom.contains(cc.toLowerCase()))
+					{
+						throw new UsageRestrictionException("Disallowed country location!!");
+					}
+				}
+				else if(georestriction.isCheckByRestricted())
+				{
+					if(restrictedFrom.contains(cc.toLowerCase()))
+					{
+						throw new UsageRestrictionException("Disallowed country location!!");
+					}
+				}
+			}
+			else
+			{
+				future.thenAccept(value -> {
+					String cc = (value.country_code != null)?value.country_code:value.countryCode;
+					if(georestriction.isCheckByAllowed())
+					{
+						if(!allowedFrom.contains(cc.toLowerCase()))
+						{
+							target.terminateSession();							
+						}
+					}
+					else if(georestriction.isCheckByRestricted())
+					{
+						if(restrictedFrom.contains(cc.toLowerCase()))
+						{
+							target.terminateSession();
+						}
+					}
+				});
+			}
 		}
 	}
 	
@@ -219,6 +476,23 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				logger.info(MODULE_NAME+".onPlay = > " + streamName);
 			}
 			
+			
+			/** GEO Restriction check**/
+			try 
+			{
+				validateGeoRestrictions(new StreamingSessionTarget(appInstance, stream), restrictions.egress.allowedFromGeo, restrictions.egress.restrictFromGeo);
+			} 
+			catch (UsageRestrictionException e) 
+			{
+				if(moduleDebug) {
+					logger.info(MODULE_NAME + ".onPublish => rejecting session on geo restrictions were violated(" + e.getMessage() + ").");
+				}
+				
+				WowzaUtils.terminateSession(appInstance, stream);
+			}
+			
+			
+			
 			try
 			{
 				// marking publishers
@@ -277,6 +551,23 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			if(moduleDebug) {
 				logger.info(MODULE_NAME+".onPublish = > " + streamName);
 			}
+			
+			
+			/** GEO Restriction check**/
+			try 
+			{
+				validateGeoRestrictions(new StreamingSessionTarget(appInstance, stream), restrictions.ingest.allowedFromGeo, restrictions.ingest.restrictFromGeo);
+			} 
+			catch (UsageRestrictionException e) 
+			{
+				if(moduleDebug) {
+					logger.info(MODULE_NAME + ".onPublish => rejecting session on geo restrictions were violated(" + e.getMessage() + ").");
+				}
+				
+				WowzaUtils.terminateSession(appInstance, stream);
+			}
+			
+			
 			
 			try
 			{
@@ -388,7 +679,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			restrictionsRulePath = getPropertyValueStr(PROP_RESTRICTIONS_RULE_PATH, null);
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " reportingEndPoint : " + String.valueOf(restrictionsRulePath));
-			}				
+			}	
+			
+			String geoAPIEndPoint = getPropertyValueStr(PROP_GEOINFO_ENDPOINT, null);
+			URL u = new URL(geoAPIEndPoint);
+			u.toURI(); 
+			
+			this.geoInfoEndpoint = geoAPIEndPoint;
+			if(moduleDebug){
+				logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
+			}	
 		}
 		catch(Exception e)
 		{
@@ -487,6 +787,11 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				this.timer.schedule(new Disconnecter(), 0, 1000);
 			}
 		}
+		
+		if(this.geoInfoEndpoint != null)
+		{
+			geoInfoProvider = new GeoInfoProvider(geoInfoEndpoint);
+		}
 	}
 	
 	
@@ -525,12 +830,13 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		catch (UsageRestrictionException e) 
 		{
 			if(moduleDebug) {
-				logger.info(MODULE_NAME + ".onConnect => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+				logger.info(MODULE_NAME + ".onRTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
 			}
 			
 			
 			WowzaUtils.terminateSession(appInstance, rtpSession);
 		}
+
 	}
 	
 	
@@ -544,7 +850,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		catch (UsageRestrictionException e) 
 		{
 			if(moduleDebug) {
-				logger.info(MODULE_NAME + ".onConnect => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+				logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
 			}
 			
 			WowzaUtils.terminateSession(appInstance, httpSession);

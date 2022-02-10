@@ -3,7 +3,6 @@ package com.rtmpworld.server.wowza;
 import com.wowza.wms.application.IApplicationInstance;
 import com.wowza.wms.client.IClient;
 import com.wowza.wms.httpstreamer.model.IHTTPStreamerSession;
-import com.wowza.wms.logging.WMSLoggerFactory;
 import com.wowza.wms.rtp.model.RTPSession;
 import com.wowza.wms.rtp.model.RTPStream;
 import com.wowza.wms.stream.IMediaStream;
@@ -117,6 +116,33 @@ public class WowzaUtils {
 			else
 			{
 				return StreamingProtocols.RTSP;
+			}
+		}
+		
+		return StreamingProtocols.UNKNOWN;
+	}
+	
+	
+	
+	public static StreamingProtocols getClientProtocol(IHTTPStreamerSession session)
+	{
+		if (session != null)
+		{
+			return StreamingProtocols.HTTP;
+		}
+		
+		return StreamingProtocols.UNKNOWN;
+	}
+	
+	
+	
+	public static StreamingProtocols getClientProtocol(IClient client)
+	{
+		if(client != null)
+		{
+			if(client.getUri().contains("rtmp") || (client.getFlashVer() != null && client.getFlashVer().length() > 0) || (client.getProtocol() == 1 || client.getProtocol() == 3))
+			{
+				return StreamingProtocols.RTMP;
 			}
 		}
 		
