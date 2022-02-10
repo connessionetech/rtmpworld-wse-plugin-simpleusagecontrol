@@ -4,6 +4,7 @@ import com.wowza.wms.application.*;
 
 import java.io.File;
 import java.io.FileReader;
+import java.util.Date;
 import java.util.Iterator;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -55,6 +56,64 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	private static WMSProperties serverProps = Server.getInstance().getProperties();
 	private WMSLogger logger;	
+	
+	
+	private class MonitorStream
+	{
+		int monitorInterval = 5000;
+		Timer mTimer;
+		TimerTask mTask;
+		IMediaStream target;
+		double maxBitrate = 0;
+		
+		public MonitorStream(IMediaStream stream, double maxBitrate)
+		{
+			this.maxBitrate = maxBitrate;
+			this.target = stream;
+			this.init();
+			
+		}
+		
+		private void init()
+		{
+			this.mTask = new TimerTask() {
+
+				@Override
+				public void run() {
+					
+					if (target == null)
+						stop();
+	
+					IOPerformanceCounter perf = target.getMediaIOPerformance();
+					Double bitrate = perf.getMessagesInBytesRate() * 8 * .001;
+	
+					if (moduleDebug)
+						logger.info(MODULE_NAME + ".MonitorStream.run '" + target.getName() + "' BitRate: " + Math.round(Math.floor(bitrate)) + "kbs, MaxBitrate:" + maxBitrate, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+	
+					if (bitrate > maxBitrate && maxBitrate > 0)
+					{	
+						WowzaUtils.terminateSession(appInstance, target);
+					}
+				}
+			};
+		}
+		
+		public void start()
+		{
+			if (mTimer == null)
+				mTimer = new Timer();
+			mTimer.scheduleAtFixedRate(mTask, new Date(), monitorInterval);
+		}
+	
+		public void stop()
+		{
+			if (mTimer != null)
+			{
+				mTimer.cancel();
+				mTimer = null;
+			}
+		}
+	}
 	
 	
 	private void validateApplicationBandwidthUsageRestrictions() throws UsageRestrictionException
@@ -268,6 +327,18 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			{
 				logger.error("Error setting properties on publish session");
 			}
+			
+			
+			if(restrictions.enableRestrictions)
+			{
+				MonitorStream monitor = new MonitorStream(stream, restrictions.ingest.maxPublishBitrate);
+				WMSProperties props = stream.getProperties();
+				synchronized(props)
+				{
+					props.setProperty("monitor", monitor);
+				}
+				monitor.start();
+			}
 		}
 
 
@@ -277,6 +348,20 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		{
 			if(moduleDebug) {
 				logger.info(MODULE_NAME+".onUnPublish = > " + streamName);
+			}
+			
+			
+			if(restrictions.enableRestrictions)
+			{
+				WMSProperties props = stream.getProperties();
+				MonitorStream monitor;
+	
+				synchronized(props)
+				{
+					monitor = (MonitorStream)props.get("monitor");
+				}
+				if (monitor != null)
+					monitor.stop();
 			}
 			
 		}
@@ -485,10 +570,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				WowzaUtils.terminateSession(appInstance, client);
 			}
 		}
-
-	}
-	
-	
+	}	
 	
 
 	public void onConnectAccept(IClient client) {

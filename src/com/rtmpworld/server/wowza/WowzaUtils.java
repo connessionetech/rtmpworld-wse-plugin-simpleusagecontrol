@@ -3,11 +3,43 @@ package com.rtmpworld.server.wowza;
 import com.wowza.wms.application.IApplicationInstance;
 import com.wowza.wms.client.IClient;
 import com.wowza.wms.httpstreamer.model.IHTTPStreamerSession;
+import com.wowza.wms.logging.WMSLoggerFactory;
 import com.wowza.wms.rtp.model.RTPSession;
 import com.wowza.wms.rtp.model.RTPStream;
 import com.wowza.wms.stream.IMediaStream;
 
 public class WowzaUtils {
+	
+	
+	public static void terminateSession(IApplicationInstance instance, IMediaStream stream)
+	{
+		StreamingProtocols protocol = WowzaUtils.getClientProtocol(stream);
+		
+		switch(protocol)
+		{
+			case RTMP:
+				stream.getClient().setShutdownClient(true);
+			break;
+			
+			case RTSP:							
+			case WEBRTC:
+				RTPSession rtpSession = stream.getRTPStream().getSession();
+				instance.getVHost().getRTPContext().shutdownRTPSession(rtpSession);
+			break;
+			
+			case HTTP:
+				IHTTPStreamerSession httpSession = stream.getHTTPStreamerSession();
+				httpSession.rejectSession();
+		        httpSession.shutdown();
+				break;
+				
+			case UNKNOWN:
+				default:
+					
+				break;
+		}
+	}
+	
 	
 	
 	public static void terminateSession(IApplicationInstance instance, IClient client)
