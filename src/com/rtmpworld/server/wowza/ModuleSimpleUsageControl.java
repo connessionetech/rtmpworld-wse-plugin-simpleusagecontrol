@@ -36,6 +36,8 @@ import com.wowza.wms.module.*;
 import com.wowza.wms.request.*;
 import com.wowza.wms.rest.restserver.HTTPVerifierWowzaRemoteHTTP.HTTPSession;
 import com.wowza.wms.stream.*;
+import com.wowza.wms.stream.mediacaster.MediaStreamMediaCasterUtils;
+import com.wowza.wms.util.ModuleUtils;
 import com.wowza.wms.rtp.model.*;
 import com.wowza.wms.server.Server;
 import com.wowza.wms.httpstreamer.model.*;
@@ -85,6 +87,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private String geoInfoEndpoint;	
 	private boolean asyncGeoInfoFetch = false;
 	private boolean moduleDebug;
+	private boolean logViewerCounts = false;
 	private static boolean serverDebug = false;
 	private Timer timer = null;
 
@@ -115,7 +118,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					if (serverDebug)
 						WMSLoggerFactory.getLogger(getClass()).info(MODULE_NAME + " Runtime.getRuntime().addShutdownHook");
 					httpRequestThreadPool.shutdown();
-					int threadPoolAwaitTerminationTimeout = serverProps.getPropertyInt(PROP_NAME_PREFIX + "ThreadPoolTerminationTimeout", 5);
+					threadPoolAwaitTerminationTimeout = serverProps.getPropertyInt(PROP_NAME_PREFIX + "ThreadPoolTerminationTimeout", 5);
 					if (!httpRequestThreadPool.awaitTermination(threadPoolAwaitTerminationTimeout, TimeUnit.SECONDS))
 						httpRequestThreadPool.shutdownNow();
 				}
@@ -126,6 +129,74 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 			}
 		});
+	}
+	
+	
+	
+	private String decodeStreamName(String streamName)
+	{
+		String streamExt = MediaStream.BASE_STREAM_EXT;
+		if (streamName != null)
+		{
+			String[] streamDecode = ModuleUtils.decodeStreamExtension(streamName, streamExt);
+			streamName = streamDecode[0];
+			streamExt = streamDecode[1];
+
+			boolean isStreamNameURL = streamName.indexOf("://") >= 0;
+			int streamQueryIdx = streamName.indexOf("?");
+			if (!isStreamNameURL && streamQueryIdx >= 0)
+			{
+				streamName = streamName.substring(0, streamQueryIdx);
+			}
+		}
+		return streamName;
+	}
+	
+
+	private int getViewerCounts(String streamName)
+	{
+		return getViewerCounts(streamName, null);
+	}
+	
+	
+	private synchronized int getPublisherCounts()
+	{
+		return this.appInstance.getPublishStreamNames().size();
+	}
+	
+	
+	
+	private synchronized int getViewerCounts(String streamName, IClient client)
+	{
+		int count = 0;
+		int rtmpCount = 0;
+		int httpCount = 0;
+		int rtpCount = 0;
+
+		streamName = decodeStreamName(streamName);
+		if (streamName != null)
+		{
+			rtmpCount += appInstance.getPlayStreamCount(streamName);
+			httpCount += appInstance.getHTTPStreamerSessionCount(streamName);
+			rtpCount += appInstance.getRTPSessionCount(streamName);
+
+			// Test for mediaCaster streams like wowz://[origin-ip]:1935/origin/myStream.
+			String mediaCasterName = MediaStreamMediaCasterUtils.mapMediaCasterName(appInstance, client, streamName);
+			if (!mediaCasterName.equals(streamName))
+			{
+				if (logViewerCounts)
+					logger.info(MODULE_NAME + ".getViewerCounts matching mediaCaster name: " + mediaCasterName, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+				rtmpCount += appInstance.getPlayStreamCount(mediaCasterName);
+				httpCount += appInstance.getHTTPStreamerSessionCount(mediaCasterName);
+				rtpCount += appInstance.getRTPSessionCount(mediaCasterName);
+			}
+			count = rtmpCount + httpCount + rtpCount;
+
+			if (logViewerCounts)
+				logger.info(MODULE_NAME + ".getViewerCounts streamName: " + streamName + " total:" + count + " rtmp: " + rtmpCount + " http: " + httpCount + " rtp: " + rtpCount, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+
+		}
+		return count;
 	}
 	
 	
@@ -471,10 +542,12 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		@Override
 		public void onPlay(IMediaStream stream, String streamName, double playStart, double playLen, int playReset) 
 		{
-
 			if(moduleDebug) {
 				logger.info(MODULE_NAME+".onPlay = > " + streamName);
 			}
+			
+			streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
+			int count = getViewerCounts(streamName);
 			
 			
 			/** GEO Restriction check**/
@@ -822,6 +895,13 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	public void onRTPSessionCreate(RTPSession rtpSession) {
 		getLogger().info(MODULE_NAME+".onRTPSessionCreate: " + rtpSession.getSessionId());
 		
+		String uri = rtpSession.getUri();
+		RTPUrl url = new RTPUrl(uri);
+		String streamName = url.getStreamName();
+		
+		streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName, rtpSession);
+		int viewcount = getViewerCounts(streamName);
+		
 		
 		try 
 		{
@@ -842,6 +922,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	public void onHTTPSessionCreate(IHTTPStreamerSession httpSession) {
 		getLogger().info(MODULE_NAME+".onHTTPSessionCreate: " + httpSession.getSessionId());
+		
+		String streamName = httpSession.getStreamName();
+		int count = getViewerCounts(streamName);
 		
 		try 
 		{
