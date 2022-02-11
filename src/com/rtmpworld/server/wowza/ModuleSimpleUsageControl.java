@@ -20,21 +20,21 @@ import java.util.concurrent.TimeoutException;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 
 import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
+import com.rtmpworld.server.wowza.decorators.StreamingSessionTarget;
 import com.rtmpworld.server.wowza.usagecontrol.UsageRestrictions;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
+import com.rtmpworld.server.wowza.utils.WowzaUtils;
 import com.wowza.util.IOPerformanceCounter;
 import com.wowza.wms.amf.*;
 import com.wowza.wms.client.*;
 import com.wowza.wms.module.*;
 import com.wowza.wms.request.*;
-import com.wowza.wms.rest.restserver.HTTPVerifierWowzaRemoteHTTP.HTTPSession;
 import com.wowza.wms.stream.*;
 import com.wowza.wms.stream.mediacaster.MediaStreamMediaCasterUtils;
 import com.wowza.wms.util.ModuleUtils;
@@ -61,6 +61,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private static String PROP_DEBUG = PROP_NAME_PREFIX + "Debug";
 	private static String PROP_RESTRICTIONS_RULE_PATH = PROP_NAME_PREFIX + "RestrictionsRulePath";
 	private static String PROP_GEOINFO_ENDPOINT = PROP_NAME_PREFIX + "GeoInfoEndpoint";
+	private static String PROP_GEOINFO_ASYNC_FETCH = PROP_NAME_PREFIX + "GeoInfoAsyncFetch";
 	private static String KEY_PUBLISHER = "PUBLISHER";
 	private static String KEY_PUBLISH_TIME = "PUBLISHTIME";
 	private static String KEY_PUBLISH_PROTOCOL = "PUBLISHPROTOCOL";
@@ -96,6 +97,11 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private WMSLogger logger;
 	
 	
+	
+	
+	/**
+	 * Static code-block to initialize threadpool
+	 */
 	static  
 	{
 		serverDebug = serverProps.getPropertyBoolean(PROP_DEBUG, false);
@@ -132,7 +138,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
-	
+	/** Decode & return stream name in case it is not straightforward **/
 	private String decodeStreamName(String streamName)
 	{
 		String streamExt = MediaStream.BASE_STREAM_EXT;
@@ -153,19 +159,39 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 
+	/**
+	 * Get viewer count
+	 * 
+	 * @param streamName
+	 * @return
+	 */
 	private int getViewerCounts(String streamName)
 	{
 		return getViewerCounts(streamName, null);
 	}
 	
 	
-	private synchronized int getPublisherCounts()
+	
+	/**
+	 * Get publisher count
+	 * 
+	 * @return
+	 */
+	private synchronized int getPublisherCount()
 	{
 		return this.appInstance.getPublishStreamNames().size();
 	}
 	
 	
 	
+	
+	/**
+	 * Get viewer count
+	 * 
+	 * @param streamName
+	 * @param client
+	 * @return
+	 */
 	private synchronized int getViewerCounts(String streamName, IClient client)
 	{
 		int count = 0;
@@ -201,6 +227,12 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
+	
+	/**
+	 * GeoInfoProvider class to help lookup country info from remote url
+	 * using client IP address.
+	 *
+	 */
 	private class GeoInfoProvider
 	{
 		private String apiEndPoint;
@@ -209,12 +241,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		{
 			this.apiEndPoint = apiEndPoint;
 		}
-		
-		public String getCountry(String ipAddress)
-		{
-			return null;			
-		}
-		
+				
 		
 		private CompletableFuture<CountryInfo> performIPLookUp(String ip)
 		{
@@ -224,9 +251,14 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				
 				try
 				{
-					String endpoint = apiEndPoint.replace("{ip}", ip);
-				    HttpGet httpPost = new HttpGet(endpoint);
-				    CloseableHttpResponse response = httpClient.execute(httpPost);
+					String endpoint = apiEndPoint.replace("IPHERE", ip);
+					if(moduleDebug){
+	                	getLogger().info(MODULE_NAME + ".performIPLookUp => endpoint : " + endpoint);
+	                }
+					
+				    HttpGet httpget = new HttpGet(endpoint);
+				    CloseableHttpResponse response = httpClient.execute(httpget);
+				    
 				    HttpEntity entity = response.getEntity();
 		            if (entity != null) {
 		            	Gson gson = new Gson();
@@ -278,12 +310,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
-	
-	
-	
 	/**
-	 * Monitors IMediaStream instance
-	 *
+	 * Class to monitors IMediaStream instance
+	 * for bitrate and terminate session if bitrate 
+	 * exceeds max allowed bitrate.
 	 */
 	private class MonitorStream
 	{
@@ -344,15 +374,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
+	
+	/**
+	 * GeoRestriction class to be used for encapsulating GeoInfo data
+	 * for use inside Future scopes.
+	 */
 	private class GeoRestriction{
 		
 		private CountryInfo info;
 		private boolean checkByAllowed = false;
 		private boolean checkByRestricted = false;
-		
-		public GeoRestriction(){
-			
-		}
 		
 
 		public CountryInfo getInfo() {
@@ -381,6 +412,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
+	
+	
+	/**
+	 * Validate total bandwidth usage of application (bytes-in/bytes-out) against max allowed
+	 * values. Exception is thrown when the usage exceeds the max allowed limits.
+	 * 
+	 * @throws UsageRestrictionException
+	 */
 	private void validateApplicationBandwidthUsageRestrictions() throws UsageRestrictionException
 	{
 		IOPerformanceCounter perf = appInstance.getIOPerformanceCounter();
@@ -399,61 +439,135 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
+	
+	/**
+	 * Validates a target (IMediaStream, RTPSession, IHTTPStreamerSession, IClient)'s country
+	 * against supplied list of allowed/restricted country codes.
+	 * 
+	 * @param target
+	 * @param allowedFrom
+	 * @param restrictedFrom
+	 * @throws UsageRestrictionException
+	 */
 	private void validateGeoRestrictions(StreamingSessionTarget target, List<String> allowedFrom, List<String> restrictedFrom) throws UsageRestrictionException
 	{
 		CountryInfo info;
 		final GeoRestriction georestriction = new GeoRestriction();
 		final String ip = target.getIPAddress();
 		
+		if((ip == "127.0.0.1") || (ip == "localhost")) {
+			return;
+		}
+		
 		
 		if(allowedFrom != null && allowedFrom.size() > 0)
 		{
+			if (moduleDebug)
+				logger.info(MODULE_NAME + ".validateGeoRestrictions => allowed check mode");
+
+			
 			georestriction.setCheckByAllowed(true);
 		}
-		
-		if(restrictedFrom != null && restrictedFrom.size() > 0)
+		else if(restrictedFrom != null && restrictedFrom.size() > 0)
 		{
+			if (moduleDebug)
+				logger.info(MODULE_NAME + ".validateGeoRestrictions => restricted check mode");
+
+			
 			georestriction.setCheckByRestricted(true);
 		}
 		
 		if(georestriction.isCheckByAllowed() || georestriction.isCheckByRestricted())
 		{
 			CompletableFuture<CountryInfo> future = geoInfoProvider.performIPLookUp(ip);
-			if(this.asyncGeoInfoFetch)
+			if(!this.asyncGeoInfoFetch)
 			{
+				if (moduleDebug)
+					logger.info(MODULE_NAME + ".validateGeoRestrictions => sync fetch");
+
+				
 				info = this.geoInfoProvider.getCountryInfoSync(future);
 				String cc = (info.country_code != null)?info.country_code:info.countryCode;
+				
+				if (moduleDebug)
+					logger.info(MODULE_NAME + ".validateGeoRestrictions => cc = " + cc);
+				
+				
 				if(georestriction.isCheckByAllowed())
 				{
-					if(!allowedFrom.contains(cc.toLowerCase()))
+					if(!allowedFrom.contains(cc.toUpperCase()))
 					{
+						if (moduleDebug)
+							logger.info(MODULE_NAME + ".validateGeoRestrictions => country code not in list of allowed");
+						
+						
 						throw new UsageRestrictionException("Disallowed country location!!");
+					}
+					else
+					{
+						if (moduleDebug)
+							logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
+						
 					}
 				}
 				else if(georestriction.isCheckByRestricted())
-				{
-					if(restrictedFrom.contains(cc.toLowerCase()))
+				{					
+					if(restrictedFrom.contains(cc.toUpperCase()))
 					{
+						if (moduleDebug)
+							logger.info(MODULE_NAME + ".validateGeoRestrictions => country code is in list of restricted");
+						
+						
 						throw new UsageRestrictionException("Disallowed country location!!");
 					}
+					else
+					{
+						if (moduleDebug)
+							logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
+						
+					}
 				}
+				
 			}
 			else
 			{
+				if (moduleDebug)
+					logger.info(MODULE_NAME + ".validateGeoRestrictions => async fetch");
+				
 				future.thenAccept(value -> {
 					String cc = (value.country_code != null)?value.country_code:value.countryCode;
+					
 					if(georestriction.isCheckByAllowed())
 					{
-						if(!allowedFrom.contains(cc.toLowerCase()))
+						if(!allowedFrom.contains(cc.toUpperCase()))
 						{
+							if (moduleDebug)
+								logger.info(MODULE_NAME + ".validateGeoRestrictions => country code not in list of allowed");
+							
+							
 							target.terminateSession();							
+						}
+						else
+						{
+							if (moduleDebug)
+								logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
 						}
 					}
 					else if(georestriction.isCheckByRestricted())
 					{
-						if(restrictedFrom.contains(cc.toLowerCase()))
+						if(restrictedFrom.contains(cc.toUpperCase()))
 						{
+							if (moduleDebug)
+								logger.info(MODULE_NAME + ".validateGeoRestrictions => country code is in list of restricted");
+							
+							
 							target.terminateSession();
+						}
+						else
+						{
+							if (moduleDebug)
+								logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
 						}
 					}
 				});
@@ -463,9 +577,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
+	/**
+	 * Class Disconnecter implements times disconnect 
+	 * for connected sessions
+	 *
+	 */
 	private class Disconnecter extends TimerTask
 	{
 
+		@Override
 		public synchronized void run()
 		{			
 			Iterator<IClient> clients = appInstance.getClients().iterator();
@@ -473,7 +593,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			{
 				IClient client = clients.next();
 				WMSProperties props = client.getProperties();
-				if (client.getTimeRunningSeconds() > restrictions.ingest.maxPublishTime)
+				if (restrictions.ingest.maxPublishTime > 0 && client.getTimeRunningSeconds() > restrictions.ingest.maxPublishTime)
 				{
 					if (props.containsKey(KEY_PUBLISHER))
 					{
@@ -549,19 +669,22 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
 			int count = getViewerCounts(streamName);
 			
-			
-			/** GEO Restriction check**/
-			try 
+			if(restrictions.enableRestrictions)
 			{
-				validateGeoRestrictions(new StreamingSessionTarget(appInstance, stream), restrictions.egress.allowedFromGeo, restrictions.egress.restrictFromGeo);
-			} 
-			catch (UsageRestrictionException e) 
-			{
-				if(moduleDebug) {
-					logger.info(MODULE_NAME + ".onPublish => rejecting session on geo restrictions were violated(" + e.getMessage() + ").");
+				/** GEO Restriction check**/
+				try 
+				{
+					validateGeoRestrictions(new StreamingSessionTarget(appInstance, stream), restrictions.egress.allowedFromGeo, restrictions.egress.restrictFromGeo);
+				} 
+				catch (UsageRestrictionException e) 
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME + ".onPlay => rejecting session on geo restrictions were violated(" + e.getMessage() + ").");
+					}
+					
+					WowzaUtils.terminateSession(appInstance, stream);
 				}
 				
-				WowzaUtils.terminateSession(appInstance, stream);
 			}
 			
 			
@@ -762,6 +885,12 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
 			}	
+			
+			this.asyncGeoInfoFetch = getPropertyValueBoolean(PROP_GEOINFO_ASYNC_FETCH, false);
+			if(moduleDebug){
+				logger.info(MODULE_NAME + " asyncGeoInfoFetch : " + String.valueOf(asyncGeoInfoFetch));
+			}	
+			
 		}
 		catch(Exception e)
 		{
@@ -782,7 +911,11 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				restrictions = gson.fromJson(reader,UsageRestrictions.class); 
 				
 				if(moduleDebug) {
-					logger.error(MODULE_NAME + ".loadRestrictions => restrictions loaded successfully" +  restrictions.toString());
+					logger.info(MODULE_NAME + ".loadRestrictions => restrictions loaded successfully" +  restrictions.toString());
+					
+					if(restrictions.enableRestrictions) {
+						logger.info(MODULE_NAME+".loadRestrictions => Restrictions are enabled");
+					}
 				}
 			}
 		}
@@ -865,6 +998,17 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		{
 			geoInfoProvider = new GeoInfoProvider(geoInfoEndpoint);
 		}
+		
+		/*
+		Timer timer = new Timer();
+		timer.schedule(new TimerTask() {
+		  @Override
+		  public void run() {
+		    //what you want to do
+			  logger.info("publishers :" + String.valueOf(getPublisherCount()));
+		  }
+		}, 0, 5000);
+		*/
 	}
 	
 	
@@ -902,19 +1046,21 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName, rtpSession);
 		int viewcount = getViewerCounts(streamName);
 		
-		
-		try 
+		if(restrictions.enableRestrictions)
 		{
-			this.validateApplicationBandwidthUsageRestrictions();
-		} 
-		catch (UsageRestrictionException e) 
-		{
-			if(moduleDebug) {
-				logger.info(MODULE_NAME + ".onRTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+			try 
+			{
+				this.validateApplicationBandwidthUsageRestrictions();
+			} 
+			catch (UsageRestrictionException e) 
+			{
+				if(moduleDebug) {
+					logger.info(MODULE_NAME + ".onRTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+				}
+				
+				
+				WowzaUtils.terminateSession(appInstance, rtpSession);
 			}
-			
-			
-			WowzaUtils.terminateSession(appInstance, rtpSession);
 		}
 
 	}
@@ -926,25 +1072,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		String streamName = httpSession.getStreamName();
 		int count = getViewerCounts(streamName);
 		
-		try 
-		{
-			this.validateApplicationBandwidthUsageRestrictions();
-		} 
-		catch (UsageRestrictionException e) 
-		{
-			if(moduleDebug) {
-				logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
-			}
-			
-			WowzaUtils.terminateSession(appInstance, httpSession);
-		}
-	}
-	
-
-	public void onConnect(IClient client, RequestFunction function, AMFDataList params) {
-		logger.info(MODULE_NAME+".onConnect: " + client.getClientId());
-		
-		if(WowzaUtils.isRTMPClient(client))
+		if(restrictions.enableRestrictions)
 		{
 			try 
 			{
@@ -953,10 +1081,34 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			catch (UsageRestrictionException e) 
 			{
 				if(moduleDebug) {
-					logger.info(MODULE_NAME + ".onConnect => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
 				}
 				
-				WowzaUtils.terminateSession(appInstance, client);
+				WowzaUtils.terminateSession(appInstance, httpSession);
+			}
+		}
+	}
+	
+
+	public void onConnect(IClient client, RequestFunction function, AMFDataList params) {
+		logger.info(MODULE_NAME+".onConnect: " + client.getClientId());
+		
+		if(restrictions.enableRestrictions)
+		{
+			if(WowzaUtils.isRTMPClient(client))
+			{
+				try 
+				{
+					this.validateApplicationBandwidthUsageRestrictions();
+				} 
+				catch (UsageRestrictionException e) 
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME + ".onConnect => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+					}
+					
+					WowzaUtils.terminateSession(appInstance, client);
+				}
 			}
 		}
 	}	

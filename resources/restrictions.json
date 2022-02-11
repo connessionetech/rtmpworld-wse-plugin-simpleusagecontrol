@@ -3,17 +3,17 @@
 	"maxBytesIn": 0,
 	"maxBytesOut": 0,
 	"ingest": {
-		"maxPublishBitrate": 500,
+		"maxPublishBitrate": 0,
 		"maxPublishersCount": 2,
-		"maxPublishTime": 60,
-		"allowedPublisherTypes": ["rtmp"],
-		"allowedFromGeo": [],
+		"maxPublishTime": 0,
+		"allowedPublisherTypes": [],
+		"allowedFromGeo": ["IN"],
 		"restrictFromGeo": []
 	},
 	"egress": {
 		"maxSubscribers": 10,
 		"maxSubscribersPerStream": 10,
-		"maxPlaybackTime": 15,
+		"maxPlaybackTime": 0,
 		"allowedSubscriberTypes": [],
 		"allowedFromGeo": [],
 		"restrictFromGeo": []

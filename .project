@@ -3,6 +3,7 @@
 	<name>wse-plugin-simpleusagecontrol</name>
 	<comment></comment>
 	<projects>
+		<project>rtmpworld-wse-utilities</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>

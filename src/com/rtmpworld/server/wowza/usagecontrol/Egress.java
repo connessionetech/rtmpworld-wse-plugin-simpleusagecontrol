@@ -1,6 +1,5 @@
 package com.rtmpworld.server.wowza.usagecontrol;
 
-import java.util.ArrayList;
 import java.util.List;
 
 public class Egress {
