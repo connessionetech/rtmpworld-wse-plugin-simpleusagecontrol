@@ -165,9 +165,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * @param streamName
 	 * @return
 	 */
-	private int getViewerCounts(String streamName)
+	private int getStreamViewerCounts(String streamName)
 	{
-		return getViewerCounts(streamName, null);
+		return getStreamViewerCounts(streamName, null);
 	}
 	
 	
@@ -192,7 +192,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * @param client
 	 * @return
 	 */
-	private synchronized int getViewerCounts(String streamName, IClient client)
+	private synchronized int getStreamViewerCounts(String streamName, IClient client)
 	{
 		int count = 0;
 		int rtmpCount = 0;
@@ -268,10 +268,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		                }
 		                
 		                if(!result.contains("country")) {
-		                	return null;
+		                	info = new CountryInfo("Unknown", "NOP");
+		                }else {
+		                	info = gson.fromJson(result, CountryInfo.class);
 		                }
-		                
-		                info = gson.fromJson(result, CountryInfo.class);
 		            }	            
 		            httpClient.close();
 				}
@@ -343,9 +343,11 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 					IOPerformanceCounter perf = target.getMediaIOPerformance();
 					Double bitrate = perf.getMessagesInBytesRate() * 8 * .001;
-	
-					if (moduleDebug)
+						
+					if (moduleDebug) {
 						logger.info(MODULE_NAME + ".MonitorStream.run '" + target.getName() + "' BitRate: " + Math.round(Math.floor(bitrate)) + "kbs, MaxBitrate:" + maxBitrate, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+						logger.info(MODULE_NAME + ".MonitorStream.run getPublishBitrateVideo = '" + target.getPublishBitrateVideo(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+					}
 	
 					if (bitrate > maxBitrate && maxBitrate > 0)
 					{	
@@ -440,6 +442,41 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
+	/**
+	 * Validates current publisher count against max allowed publishers.
+	 * Exception is thrown when the count will exceeds the max allowed publishers.
+	 * 
+	 * @throws UsageRestrictionException
+	 */
+	private void validateMaxPublisherRestrictions() throws UsageRestrictionException
+	{
+		int publisherCount = getPublisherCount();
+		if((restrictions.ingest.maxPublishersCount>0) && (publisherCount >= restrictions.ingest.maxPublishersCount))
+		{
+			throw new UsageRestrictionException("Max publishers restriction reached!!");
+		}
+	}
+	
+	
+	
+	/**
+	 * Validates current viewer count against max allowed viewers.
+	 * Exception is thrown when the count will exceeds the max allowed viewers.
+	 * 
+	 * @param streamName
+	 * @throws UsageRestrictionException
+	 */
+	private void validateMaxViewerRestrictions(String streamName) throws UsageRestrictionException
+	{
+		int viewerCount = getStreamViewerCounts(streamName);
+		if((restrictions.egress.maxSubscribersPerStream>0) && (viewerCount >= restrictions.egress.maxSubscribersPerStream))
+		{
+			throw new UsageRestrictionException("Max viewer restriction reached!!");
+		}
+	}
+	
+	
+	
 	
 	/**
 	 * Validates a target (IMediaStream, RTPSession, IHTTPStreamerSession, IClient)'s country
@@ -456,7 +493,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		final GeoRestriction georestriction = new GeoRestriction();
 		final String ip = target.getIPAddress();
 		
-		if((ip == "127.0.0.1") || (ip == "localhost")) {
+		if(ip.equalsIgnoreCase("127.0.0.1") || ip.equalsIgnoreCase("localhost")) {
 			return;
 		}
 		
@@ -666,11 +703,30 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				logger.info(MODULE_NAME+".onPlay = > " + streamName);
 			}
 			
-			streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
-			int count = getViewerCounts(streamName);
+			
+			
 			
 			if(restrictions.enableRestrictions)
 			{
+				
+				/** Max viewers restriction check**/
+				try
+				{
+					String truStreamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
+					validateMaxViewerRestrictions(truStreamName);
+				}
+				catch (UsageRestrictionException e) 
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME + ".onPlay => rejecting session on max viewer restriction violation for stream "+ streamName +"(" + e.getMessage() + ").");
+					}
+					
+					WowzaUtils.terminateSession(appInstance, stream);
+				}
+				
+				
+				
+				
 				/** GEO Restriction check**/
 				try 
 				{
@@ -746,21 +802,40 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		{
 			if(moduleDebug) {
 				logger.info(MODULE_NAME+".onPublish = > " + streamName);
-			}
+			}			
 			
 			
-			/** GEO Restriction check**/
-			try 
+			if(restrictions.enableRestrictions)
 			{
-				validateGeoRestrictions(new StreamingSessionTarget(appInstance, stream), restrictions.ingest.allowedFromGeo, restrictions.ingest.restrictFromGeo);
-			} 
-			catch (UsageRestrictionException e) 
-			{
-				if(moduleDebug) {
-					logger.info(MODULE_NAME + ".onPublish => rejecting session on geo restrictions were violated(" + e.getMessage() + ").");
+			
+				/** Max publishers check **/
+				try 
+				{
+					validateMaxPublisherRestrictions();
+				} 
+				catch (UsageRestrictionException e) 
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME + ".onPublish => rejecting session on max publishers restriction violation(" + e.getMessage() + ").");
+					}
+					
+					WowzaUtils.terminateSession(appInstance, stream);
 				}
 				
-				WowzaUtils.terminateSession(appInstance, stream);
+				
+				/** GEO Restriction check**/
+				try 
+				{
+					validateGeoRestrictions(new StreamingSessionTarget(appInstance, stream), restrictions.ingest.allowedFromGeo, restrictions.ingest.restrictFromGeo);
+				} 
+				catch (UsageRestrictionException e) 
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME + ".onPublish => rejecting session on geo restrictions were violated(" + e.getMessage() + ").");
+					}
+					
+					WowzaUtils.terminateSession(appInstance, stream);
+				}
 			}
 			
 			
@@ -999,7 +1074,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			geoInfoProvider = new GeoInfoProvider(geoInfoEndpoint);
 		}
 		
+		
 		/*
+		
 		Timer timer = new Timer();
 		timer.schedule(new TimerTask() {
 		  @Override
@@ -1008,6 +1085,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			  logger.info("publishers :" + String.valueOf(getPublisherCount()));
 		  }
 		}, 0, 5000);
+		
 		*/
 	}
 	
@@ -1044,7 +1122,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		String streamName = url.getStreamName();
 		
 		streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName, rtpSession);
-		int viewcount = getViewerCounts(streamName);
+		int viewcount = getStreamViewerCounts(streamName);
 		
 		if(restrictions.enableRestrictions)
 		{
@@ -1070,7 +1148,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		getLogger().info(MODULE_NAME+".onHTTPSessionCreate: " + httpSession.getSessionId());
 		
 		String streamName = httpSession.getStreamName();
-		int count = getViewerCounts(streamName);
+		int count = getStreamViewerCounts(streamName);
 		
 		if(restrictions.enableRestrictions)
 		{
