@@ -27,6 +27,7 @@ import org.apache.http.util.EntityUtils;
 import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
 import com.rtmpworld.server.wowza.decorators.StreamingSessionTarget;
+import com.rtmpworld.server.wowza.enums.StreamingProtocols;
 import com.rtmpworld.server.wowza.usagecontrol.UsageRestrictions;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
 import com.rtmpworld.server.wowza.utils.WowzaUtils;
