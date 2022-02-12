@@ -186,6 +186,62 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	/**
+	 * 
+	 * @return total publishers count
+	 */
+	private synchronized int getPublisherCountUsingProperties()
+	{
+		int rtmpCount = 0;
+		int rtpCount = 0;
+		int httpCount = 0;
+		
+		WMSProperties props;
+		
+		//count http
+		List<IHTTPStreamerSession> httpsessions = appInstance.getHTTPStreamerSessions();
+		for(IHTTPStreamerSession httpsession : httpsessions)
+		{
+			props = httpsession.getProperties();
+			if(props.containsKey(KEY_PUBLISHER))
+			{
+				httpCount += 1;
+			}
+		}
+		
+		
+		//count rtp
+		List<RTPSession> rtpsessions = appInstance.getRTPSessions();
+		for(RTPSession rtpsession : rtpsessions)
+		{
+			props = rtpsession.getProperties();
+			if(props.containsKey(KEY_PUBLISHER))
+			{
+				rtpCount += 1;
+			}
+		}
+		
+		
+		//count rtmp
+		List<IClient> clients = appInstance.getClients();
+		for(IClient client : clients)
+		{
+			props = client.getProperties();
+			if(props.containsKey(KEY_PUBLISHER))
+			{
+				rtmpCount += 1;
+			}
+		}
+		
+		
+		return rtmpCount + rtpCount + httpCount;
+	}
+	
+	
+	
+	
+	
+	
+	/**
 	 * Get viewer count
 	 * 
 	 * @param streamName
@@ -224,6 +280,58 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		}
 		return count;
 	}
+	
+	
+	
+	
+	/**
+	 * Returns total viewer count of the application instance.This is the net sum of
+	 * all subscribers of all streams.  
+	 * 
+	 * @param client
+	 * @return
+	 */
+	private synchronized int getTotalViewerCounts(IClient client)
+	{
+		int totalCount = 0;		
+		List<String> streamNames = appInstance.getPublishStreamNames();
+		
+		for(String streamName : streamNames)
+		{
+			int count = 0;
+			int rtmpCount = 0;
+			int httpCount = 0;
+			int rtpCount = 0;
+			
+			streamName = decodeStreamName(streamName);
+			if (streamName != null)
+			{
+				rtmpCount += appInstance.getPlayStreamCount(streamName);
+				httpCount += appInstance.getHTTPStreamerSessionCount(streamName);
+				rtpCount += appInstance.getRTPSessionCount(streamName);
+	
+				// Test for mediaCaster streams like wowz://[origin-ip]:1935/origin/myStream.
+				String mediaCasterName = MediaStreamMediaCasterUtils.mapMediaCasterName(appInstance, client, streamName);
+				if (!mediaCasterName.equals(streamName))
+				{
+					if (logViewerCounts)
+						logger.info(MODULE_NAME + ".getViewerCounts matching mediaCaster name: " + mediaCasterName, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+					rtmpCount += appInstance.getPlayStreamCount(mediaCasterName);
+					httpCount += appInstance.getHTTPStreamerSessionCount(mediaCasterName);
+					rtpCount += appInstance.getRTPSessionCount(mediaCasterName);
+				}
+	
+				if (logViewerCounts)
+					logger.info(MODULE_NAME + ".getViewerCounts streamName: " + streamName + " total:" + count + " rtmp: " + rtmpCount + " http: " + httpCount + " rtp: " + rtpCount, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+			}
+			
+			count = (rtmpCount + httpCount + rtpCount);
+			totalCount += count;
+		}
+		
+		return totalCount;
+	}
+	
 	
 	
 	
@@ -1075,18 +1183,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		}
 		
 		
-		/*
-		
+		/**
 		Timer timer = new Timer();
 		timer.schedule(new TimerTask() {
 		  @Override
 		  public void run() {
 		    //what you want to do
-			  logger.info("publishers :" + String.valueOf(getPublisherCount()));
+			  logger.info("publishers :" + String.valueOf(getPublisherCount()) + " : " + String.valueOf(getPublisherCountUsingProperties()));
 		  }
 		}, 0, 5000);
-		
-		*/
+		**/
 	}
 	
 	
