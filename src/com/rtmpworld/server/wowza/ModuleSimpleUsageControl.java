@@ -579,7 +579,24 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		int viewerCount = getStreamViewerCounts(streamName);
 		if((restrictions.egress.maxSubscribersPerStream>0) && (viewerCount >= restrictions.egress.maxSubscribersPerStream))
 		{
-			throw new UsageRestrictionException("Max viewer restriction reached!!");
+			throw new UsageRestrictionException("Max viewer per stream restriction reached!!");
+		}
+	}
+	
+	
+	
+	/**
+	 * Validates total viewer count (sum of all viewers for all streams) against max allowed limit.
+	 * Exception is thrown when the count will exceeds the max allowed viewers.
+	 * 
+	 * @throws UsageRestrictionException
+	 */
+	private void validateTotalViewerRestrictions() throws UsageRestrictionException
+	{
+		int viewerCount = getTotalViewerCounts(null);
+		if((restrictions.egress.maxSubscribers>0) && (viewerCount >= restrictions.egress.maxSubscribers))
+		{
+			throw new UsageRestrictionException("Max total viewer restriction reached!!");
 		}
 	}
 	
@@ -817,7 +834,23 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			if(restrictions.enableRestrictions)
 			{
 				
-				/** Max viewers restriction check**/
+				/** Max total viewers restriction check**/
+				try
+				{
+					validateTotalViewerRestrictions();
+				}
+				catch (UsageRestrictionException e) 
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME + ".onPlay => rejecting session on max total viewer restriction violation.(" + e.getMessage() + ").");
+					}
+					
+					WowzaUtils.terminateSession(appInstance, stream);
+				}
+				
+				
+				
+				/** Max viewers per stream restriction check**/
 				try
 				{
 					String truStreamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
