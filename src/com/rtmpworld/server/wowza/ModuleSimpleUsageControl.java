@@ -492,17 +492,17 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 */
 	private class GeoRestriction{
 		
-		private CountryInfo info;
+		private CountryInfo countryInfo;
 		private boolean checkByAllowed = false;
 		private boolean checkByRestricted = false;
 		
 
-		public CountryInfo getInfo() {
-			return info;
+		public CountryInfo getCountryInfo() {
+			return countryInfo;
 		}
 
-		public void setInfo(CountryInfo info) {
-			this.info = info;
+		public void setCountryInfo(CountryInfo info) {
+			this.countryInfo = info;
 		}
 
 		public boolean isCheckByAllowed() {
@@ -1079,22 +1079,19 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		
 		try
 		{
-			moduleDebug = getPropertyValueBoolean(PROP_NAME_PREFIX + "Debug", false);
-
-			//if (logger.isDebugEnabled())
-			//	moduleDebug = true;
+			moduleDebug = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance,PROP_NAME_PREFIX + "Debug", false);
 
 			if (moduleDebug)
 				logger.info(MODULE_NAME + " DEBUG mode is ON");
 			else
 				logger.info(MODULE_NAME + " DEBUG mode is OFF");
 			
-			restrictionsRulePath = getPropertyValueStr(PROP_RESTRICTIONS_RULE_PATH, null);
+			restrictionsRulePath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_RESTRICTIONS_RULE_PATH, null);
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " reportingEndPoint : " + String.valueOf(restrictionsRulePath));
 			}	
 			
-			String geoAPIEndPoint = getPropertyValueStr(PROP_GEOINFO_ENDPOINT, null);
+			String geoAPIEndPoint = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_GEOINFO_ENDPOINT, null);
 			URL u = new URL(geoAPIEndPoint);
 			u.toURI(); 
 			
@@ -1103,7 +1100,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
 			}	
 			
-			this.asyncGeoInfoFetch = getPropertyValueBoolean(PROP_GEOINFO_ASYNC_FETCH, false);
+			this.asyncGeoInfoFetch = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance, PROP_GEOINFO_ASYNC_FETCH, false);
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " asyncGeoInfoFetch : " + String.valueOf(asyncGeoInfoFetch));
 			}	
@@ -1143,30 +1140,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		}
 	}
 	
-	
-	private String getPropertyValueStr(String key, String defaultValue)
-	{
-		String value = serverProps.getPropertyStr(key, defaultValue);
-		value = appInstance.getProperties().getPropertyStr(key, value);
-		return value;
-	}
-	
-	
-	private int getPropertyValueInt(String key, int defaultValue)
-	{
-		int value = serverProps.getPropertyInt(key, defaultValue);
-		value = appInstance.getProperties().getPropertyInt(key, value);
-		return value;
-	}
-	
-	
-	private boolean getPropertyValueBoolean(String key, boolean defaultValue)
-	{
-		boolean value = serverProps.getPropertyBoolean(key, defaultValue);
-		value = appInstance.getProperties().getPropertyBoolean(key, value);
-		return value;
-	}
-	
+
 	
 	public String getHTTPProtocol(IHTTPStreamerSession session)
 	{

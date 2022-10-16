@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>wse-plugin-simpleusagecontrol</name>
+	<name>rtmpworld-wse-plugin-simpleusagecontrol</name>
 	<comment></comment>
 	<projects>
 		<project>rtmpworld-wse-utilities</project>

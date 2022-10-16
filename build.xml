@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
-<project name="wse-plugin-simpleusagecontrol" default="jar" basedir="..">
+<project name="rtmpworld-wse-plugin-simpleusagecontrol" default="jar" basedir="..">
 	
 	<property name="wowza.lib.dir" value="C:/Program Files (x86)/Wowza Media Systems/Wowza Streaming Engine 4.8.17+1/lib"/>
-	<property name="jar.filename" value="wse-plugin-simpleusagecontrol.jar"/>
+	<property name="jar.filename" value="rtmpworld-wse-plugin-simpleusagecontrol.jar"/>
 	<property name="core.build.dir" value="bin"/>
 
 	<target name="jar">
