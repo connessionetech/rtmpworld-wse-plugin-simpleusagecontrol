@@ -4,18 +4,23 @@ import com.wowza.wms.application.*;
 
 import java.io.File;
 import java.io.FileReader;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+
+import java.io.IOException;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -26,10 +31,15 @@ import org.apache.http.util.EntityUtils;
 
 import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
+import com.microsoft.azure.storage.core.Logger;
 import com.rtmpworld.server.wowza.decorators.StreamingSessionTarget;
 import com.rtmpworld.server.wowza.enums.StreamingProtocols;
 import com.rtmpworld.server.wowza.usagecontrol.UsageRestrictions;
+import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindDBGeoInfoProvider;
+import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindWebServiceGeoInfoProvider;
+import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
+import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
 import com.rtmpworld.server.wowza.utils.WowzaUtils;
 import com.wowza.util.IOPerformanceCounter;
 import com.wowza.wms.amf.*;
@@ -50,7 +60,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	private IApplicationInstance appInstance;
 	private UsageRestrictions restrictions;	
-	private GeoInfoProvider geoInfoProvider;
+	private IGeoInfoProvider geoInfoProvider;
 	private StreamListener streamListener = new StreamListener();
 	
 	
@@ -342,77 +352,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * using client IP address.
 	 *
 	 */
-	private class GeoInfoProvider
-	{
-		private String apiEndPoint;
-		
-		public GeoInfoProvider(String apiEndPoint)
-		{
-			this.apiEndPoint = apiEndPoint;
-		}
-				
-		
-		private CompletableFuture<CountryInfo> performIPLookUp(String ip)
-		{
-			return CompletableFuture.supplyAsync(()->{
-				CloseableHttpClient httpClient = HttpClients.createDefault();
-				CountryInfo info = null;
-				
-				try
-				{
-					String endpoint = apiEndPoint.replace("IPHERE", ip);
-					if(moduleDebug){
-	                	getLogger().info(MODULE_NAME + ".performIPLookUp => endpoint : " + endpoint);
-	                }
-					
-				    HttpGet httpget = new HttpGet(endpoint);
-				    CloseableHttpResponse response = httpClient.execute(httpget);
-				    
-				    HttpEntity entity = response.getEntity();
-		            if (entity != null) {
-		            	Gson gson = new Gson();
-		                String result = EntityUtils.toString(entity);
-		                if(moduleDebug){
-		                	getLogger().info(MODULE_NAME + ".performIPLookUp => Response : " + result);
-		                }
-		                
-		                if(!result.contains("country")) {
-		                	info = new CountryInfo("Unknown", "NOP");
-		                }else {
-		                	info = gson.fromJson(result, CountryInfo.class);
-		                }
-		            }	            
-		            httpClient.close();
-				}
-				catch(Exception e)
-				{
-					getLogger().error(MODULE_NAME + ".performIPLookUp for => " + ip + ".Cause : " + e.getMessage());
-				}
-			    
-			    return info;		
-				
-			}, httpRequestThreadPool);
-		}
-		
-		
-		public CountryInfo getCountryInfoSync(CompletableFuture<CountryInfo> future)
-		{
-			CountryInfo result;
-			
-			try 
-			{
-				result = future.get(5000, TimeUnit.MILLISECONDS);
-			} 
-			catch (InterruptedException | ExecutionException | TimeoutException e) 
-			{
-				result = null;
-				getLogger().error("Error getting country info." + e.getMessage());
-				
-			}
-			
-			return result;
-		}
-	}
+	
 	
 	
 	
@@ -482,8 +422,6 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			}
 		}
 	}
-	
-	
 	
 	
 	/**
@@ -643,19 +581,13 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		
 		if(georestriction.isCheckByAllowed() || georestriction.isCheckByRestricted())
 		{
-			CompletableFuture<CountryInfo> future = geoInfoProvider.performIPLookUp(ip);
-			if(!this.asyncGeoInfoFetch)
-			{
-				if (moduleDebug)
-					logger.info(MODULE_NAME + ".validateGeoRestrictions => sync fetch");
-
-				
-				info = this.geoInfoProvider.getCountryInfoSync(future);
-				String cc = (info.country_code != null)?info.country_code:info.countryCode;
-				
-				if (moduleDebug)
-					logger.info(MODULE_NAME + ".validateGeoRestrictions => cc = " + cc);
-				
+			if (moduleDebug)
+				logger.info(MODULE_NAME + ".validateGeoRestrictions => async fetch");
+			
+			
+			CompletableFuture<CountryInfo> future = getGeoInfo(ip);
+			future.thenAccept(value -> {
+				String cc = value.getCountryCode();
 				
 				if(georestriction.isCheckByAllowed())
 				{
@@ -665,77 +597,55 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 							logger.info(MODULE_NAME + ".validateGeoRestrictions => country code not in list of allowed");
 						
 						
-						throw new UsageRestrictionException("Disallowed country location!!");
+						target.terminateSession();							
 					}
 					else
 					{
 						if (moduleDebug)
 							logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
-						
 					}
 				}
 				else if(georestriction.isCheckByRestricted())
-				{					
+				{
 					if(restrictedFrom.contains(cc.toUpperCase()))
 					{
 						if (moduleDebug)
 							logger.info(MODULE_NAME + ".validateGeoRestrictions => country code is in list of restricted");
 						
 						
-						throw new UsageRestrictionException("Disallowed country location!!");
+						target.terminateSession();
 					}
 					else
 					{
 						if (moduleDebug)
 							logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
-						
 					}
 				}
-				
-			}
-			else
-			{
-				if (moduleDebug)
-					logger.info(MODULE_NAME + ".validateGeoRestrictions => async fetch");
-				
-				future.thenAccept(value -> {
-					String cc = (value.country_code != null)?value.country_code:value.countryCode;
-					
-					if(georestriction.isCheckByAllowed())
-					{
-						if(!allowedFrom.contains(cc.toUpperCase()))
-						{
-							if (moduleDebug)
-								logger.info(MODULE_NAME + ".validateGeoRestrictions => country code not in list of allowed");
-							
-							
-							target.terminateSession();							
-						}
-						else
-						{
-							if (moduleDebug)
-								logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
-						}
-					}
-					else if(georestriction.isCheckByRestricted())
-					{
-						if(restrictedFrom.contains(cc.toUpperCase()))
-						{
-							if (moduleDebug)
-								logger.info(MODULE_NAME + ".validateGeoRestrictions => country code is in list of restricted");
-							
-							
-							target.terminateSession();
-						}
-						else
-						{
-							if (moduleDebug)
-								logger.info(MODULE_NAME + ".validateGeoRestrictions => Country allowed");
-						}
-					}
-				});
-			}
+			});
 		}
+	}
+	
+	
+	
+	
+	private CompletableFuture<CountryInfo> getGeoInfo(String ip)
+	{
+		return CompletableFuture.supplyAsync(()->{
+			
+			CountryInfo info = null;
+			
+			try 
+			{
+				info = geoInfoProvider.getCountryInfo(ip);
+			} 
+			catch (GeoInfoException e) 
+			{
+				logger.info("Unable to fetch geo information for client ip {}. Cause {}", ip, e);
+			}
+			
+			return info;
+			
+		});
 	}
 	
 	
@@ -1091,19 +1001,57 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				logger.info(MODULE_NAME + " reportingEndPoint : " + String.valueOf(restrictionsRulePath));
 			}	
 			
+			
 			String geoAPIEndPoint = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_GEOINFO_ENDPOINT, null);
-			URL u = new URL(geoAPIEndPoint);
-			u.toURI(); 
 			
-			this.geoInfoEndpoint = geoAPIEndPoint;
-			if(moduleDebug){
-				logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
-			}	
 			
-			this.asyncGeoInfoFetch = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance, PROP_GEOINFO_ASYNC_FETCH, false);
-			if(moduleDebug){
-				logger.info(MODULE_NAME + " asyncGeoInfoFetch : " + String.valueOf(asyncGeoInfoFetch));
-			}	
+			try
+			{			
+				URL u = new URL(geoAPIEndPoint);
+				u.toURI(); 
+				
+				this.geoInfoEndpoint = geoAPIEndPoint;
+				if(moduleDebug){
+					logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
+				}
+				
+				this.asyncGeoInfoFetch = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance, PROP_GEOINFO_ASYNC_FETCH, false);
+				if(moduleDebug){
+					logger.info(MODULE_NAME + " asyncGeoInfoFetch : " + String.valueOf(asyncGeoInfoFetch));
+				}	
+				
+				geoInfoProvider = new MaxmindWebServiceGeoInfoProvider(this.geoInfoEndpoint);
+			}
+			catch(MalformedURLException me)
+			{
+				if(moduleDebug){
+					logger.error("geoAPIEndPoint is not a valid API URL.");
+				}
+				
+				File database = new File(geoAPIEndPoint);
+				if(!database.exists()) {					
+					if(moduleDebug){
+						logger.error("geoAPIEndPoint is not a valid maxmind database path.");
+					}
+					
+					throw new IOException("No value set for `geoAPIEndPoint`. No GeoInfo provider enabled will be.");
+				}
+				
+				
+				this.geoInfoEndpoint = geoAPIEndPoint;
+				if(moduleDebug){
+					logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
+				}
+				
+				geoInfoProvider = new MaxmindDBGeoInfoProvider(this.geoInfoEndpoint);
+
+			}
+			finally
+			{
+				if(geoInfoProvider != null){
+					geoInfoProvider.initialize();
+				}
+			}
 			
 		}
 		catch(Exception e)
@@ -1183,11 +1131,6 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				this.timer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
 				this.timer.schedule(new Disconnecter(), 0, 1000);
 			}
-		}
-		
-		if(this.geoInfoEndpoint != null)
-		{
-			geoInfoProvider = new GeoInfoProvider(geoInfoEndpoint);
 		}
 		
 		

@@ -156,5 +156,6 @@
 	<classpathentry kind="lib" path="C:/Program Files/Wowza Media Systems/Wowza_Streaming_Engine_4_8_20_1/lib/wms-webrtc.jar"/>
 	<classpathentry kind="lib" path="C:/Program Files/Wowza Media Systems/Wowza_Streaming_Engine_4_8_20_1/lib/woodstox-core-6.2.7.jar"/>
 	<classpathentry kind="lib" path="C:/Program Files/Wowza Media Systems/Wowza_Streaming_Engine_4_8_20_1/lib/xercesImpl-2.12.1.jar"/>
+	<classpathentry kind="lib" path="C:/Program Files/Wowza Media Systems/Wowza_Streaming_Engine_4_8_20_1/lib/geoip2-3.0.1.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
