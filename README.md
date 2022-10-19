@@ -1,2 +1,19 @@
-# wse-plugin-simpleusagecontrol
-Allows setting usage limits for application
+# rtmpworld-wse-plugin-simpleusagecontrol
+
+# About
+---
+
+The **ModuleSimpleUsageControl** module for Wowza Streaming Engine™ media server software can be used to implement usage control on your application. The module allows you to configure various types of limits on your application such as total publishers, total subscribers, publish time, subscribe time and country(location) based limiting via Maxmind GeoIP database or IPWHOIS free api service.
+
+
+# Dependency Note
+---
+
+This module is dependent on the [RTMPWorld Shared Library For Wowza Streaming Engine](https://rtmpworld.com/product/shared-libraries-for-wowza-streaming-engine/). Please follow documentation on how to download & install the dependency jar on your Wowza Streaming Engine.
+
+This library is required to be in your classpath if you plan on compiling the plugin on your own in your favourite IDE.
+
+# Documentation
+---
+
+The detailed documentation on the subject can be found [here]().
