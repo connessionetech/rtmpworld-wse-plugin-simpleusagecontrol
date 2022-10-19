@@ -4,38 +4,23 @@ import com.wowza.wms.application.*;
 
 import java.io.File;
 import java.io.FileReader;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-
 import java.io.IOException;
-
-import org.apache.http.HttpEntity;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
-import org.apache.http.util.EntityUtils;
 
 import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
-import com.microsoft.azure.storage.core.Logger;
 import com.rtmpworld.server.wowza.decorators.StreamingSessionTarget;
 import com.rtmpworld.server.wowza.enums.StreamingProtocols;
 import com.rtmpworld.server.wowza.usagecontrol.UsageRestrictions;
-import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindDBGeoInfoProvider;
+import com.rtmpworld.server.wowza.usagecontrol.dataprovider.IPWhoIsWebServiceGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindWebServiceGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
@@ -66,13 +51,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	// module name and property name prefix
 	private static String PROP_NAME_PREFIX = "usagecontrol";
-	private static String MODULE_NAME = "ModuleSimpleUsageControl";
+	public static String MODULE_NAME = "ModuleSimpleUsageControl";
 	
 	// for logging
 	private static String PROP_DEBUG = PROP_NAME_PREFIX + "Debug";
 	private static String PROP_RESTRICTIONS_RULE_PATH = PROP_NAME_PREFIX + "RestrictionsRulePath";
-	private static String PROP_GEOINFO_ENDPOINT = PROP_NAME_PREFIX + "GeoInfoEndpoint";
-	private static String PROP_GEOINFO_ASYNC_FETCH = PROP_NAME_PREFIX + "GeoInfoAsyncFetch";
+	
+	private static String PROP_MAXMIND_ACCOUNT_ID = PROP_NAME_PREFIX + "MaxmindAccountId";
+	private static String PROP_GEO_API_LICENSE_KEY = PROP_NAME_PREFIX + "GeoApiLicenseKey";
+	
+	
 	private static String KEY_PUBLISHER = "PUBLISHER";
 	private static String KEY_PUBLISH_TIME = "PUBLISHTIME";
 	private static String KEY_PUBLISH_PROTOCOL = "PUBLISHPROTOCOL";
@@ -97,11 +85,14 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	private String restrictionsRulePath;	
 	private String geoInfoEndpoint;	
-	private boolean asyncGeoInfoFetch = false;
 	private boolean moduleDebug;
 	private boolean logViewerCounts = false;
 	private static boolean serverDebug = false;
 	private Timer timer = null;
+	
+	private int maxmindAccountId;
+	private String geoApiLicenseKey;
+	private String maxmindDbPath;
 
 	
 	private static WMSProperties serverProps = Server.getInstance().getProperties();
@@ -434,14 +425,6 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		private boolean checkByAllowed = false;
 		private boolean checkByRestricted = false;
 		
-
-		public CountryInfo getCountryInfo() {
-			return countryInfo;
-		}
-
-		public void setCountryInfo(CountryInfo info) {
-			this.countryInfo = info;
-		}
 
 		public boolean isCheckByAllowed() {
 			return checkByAllowed;
@@ -1002,61 +985,62 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			}	
 			
 			
-			String geoAPIEndPoint = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_GEOINFO_ENDPOINT, null);
-			
+			// check and initialize appropriate geoinfo provider
 			
 			try
-			{			
-				URL u = new URL(geoAPIEndPoint);
-				u.toURI(); 
-				
-				this.geoInfoEndpoint = geoAPIEndPoint;
-				if(moduleDebug){
-					logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
-				}
-				
-				this.asyncGeoInfoFetch = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance, PROP_GEOINFO_ASYNC_FETCH, false);
-				if(moduleDebug){
-					logger.info(MODULE_NAME + " asyncGeoInfoFetch : " + String.valueOf(asyncGeoInfoFetch));
-				}	
-				
-				geoInfoProvider = new MaxmindWebServiceGeoInfoProvider(this.geoInfoEndpoint);
-			}
-			catch(MalformedURLException me)
 			{
-				if(moduleDebug){
-					logger.error("geoAPIEndPoint is not a valid API URL.");
+				this.maxmindDbPath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_GEO_API_LICENSE_KEY, null);
+				if(this.maxmindDbPath == null || String.valueOf(this.maxmindDbPath).equalsIgnoreCase("null"))
+				{
+					throw new IOException("Invalid database path");
 				}
-				
-				File database = new File(geoAPIEndPoint);
-				if(!database.exists()) {					
-					if(moduleDebug){
-						logger.error("geoAPIEndPoint is not a valid maxmind database path.");
+				else
+				{
+					File database = new File(this.maxmindDbPath);
+					if(!database.exists()) {
+						throw new IOException("Database does not exist in specified path");
 					}
-					
-					throw new IOException("No value set for `geoAPIEndPoint`. No GeoInfo provider enabled will be.");
-				}
-				
-				
-				this.geoInfoEndpoint = geoAPIEndPoint;
-				if(moduleDebug){
-					logger.info(MODULE_NAME + " geoInfoEndpoint : " + String.valueOf(geoInfoEndpoint));
-				}
-				
-				geoInfoProvider = new MaxmindDBGeoInfoProvider(this.geoInfoEndpoint);
-
+				}				
 			}
-			finally
+			catch(IOException ie)
 			{
-				if(geoInfoProvider != null){
-					geoInfoProvider.initialize();
+				logger.info(MODULE_NAME + " Maxmind binary database not available. looking for WebService capabilities...");
+				
+				this.geoApiLicenseKey = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_GEO_API_LICENSE_KEY, null);
+				if(this.geoApiLicenseKey == null || String.valueOf(this.geoApiLicenseKey).equalsIgnoreCase("null")){
+					throw new IOException("No valid license key specified for geoapi services");
+					// exit with exception
+				}
+				
+				// if license specified try to look for maxmind account id
+				try
+				{			
+					this.maxmindAccountId = WowzaUtils.getPropertyValueInt(serverProps, appInstance, PROP_MAXMIND_ACCOUNT_ID, 0);
+					if(this.maxmindAccountId == 0) throw new Exception("Invalid Maxmind account Id");
+					
+					if(moduleDebug){
+						logger.info(MODULE_NAME + " maxmindAccountId : " + String.valueOf(maxmindAccountId));
+					}				
+					
+					geoInfoProvider = new MaxmindWebServiceGeoInfoProvider(this.maxmindAccountId, this.geoApiLicenseKey);
+				}
+				catch(Exception ex)
+				{
+					logger.info(MODULE_NAME + " Maxmind account ID not set. Assuming webservice is for IPWHOIS");
+					
+					geoInfoProvider = new IPWhoIsWebServiceGeoInfoProvider(this.geoApiLicenseKey);
 				}
 			}
+			
+			// initialize geoInfoProvider
+			if(geoInfoProvider != null){
+				geoInfoProvider.initialize();
+			}			
 			
 		}
 		catch(Exception e)
 		{
-			logger.error(MODULE_NAME + " Error reading properties {}", e);
+			logger.error(MODULE_NAME + " Error reading module properties {}", e);
 		}
 	}
 	

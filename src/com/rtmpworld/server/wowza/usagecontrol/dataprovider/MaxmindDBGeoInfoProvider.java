@@ -12,7 +12,6 @@ import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
-import java.util.concurrent.CompletableFuture;
 
 public class MaxmindDBGeoInfoProvider implements IGeoInfoProvider {
 	
@@ -31,6 +30,7 @@ public class MaxmindDBGeoInfoProvider implements IGeoInfoProvider {
 	}
 	
 	
+	@Override
 	public void initialize() throws IOException 
 	{
 		File database = new File(dbPath);
@@ -39,6 +39,7 @@ public class MaxmindDBGeoInfoProvider implements IGeoInfoProvider {
 	
 	
 	
+	@Override
 	public CountryInfo getCountryInfo(String ip) throws GeoInfoException
 	{
 		InetAddress ipAddress;

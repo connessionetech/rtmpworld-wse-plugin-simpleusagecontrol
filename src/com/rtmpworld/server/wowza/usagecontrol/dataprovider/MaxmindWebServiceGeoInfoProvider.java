@@ -11,33 +11,36 @@ import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.util.concurrent.CompletableFuture;
 
 public class MaxmindWebServiceGeoInfoProvider implements IGeoInfoProvider {
 	
 	WebServiceClient client;
 	String licenseKey;
+	int accountId;
 	
 	public MaxmindWebServiceGeoInfoProvider()
 	{
 		
 	}
 	
-	public MaxmindWebServiceGeoInfoProvider(String licenseKey)
+	public MaxmindWebServiceGeoInfoProvider(int accountId, String licenseKey)
 	{
+		this.accountId = accountId;
 		this.licenseKey = licenseKey;
 	}
 	
 	
+	@Override
 	public void initialize() throws IOException 
 	{
-		client = new WebServiceClient.Builder(42, "license_key")
+		client = new WebServiceClient.Builder(this.accountId, this.licenseKey)
 			    .build();
 
 	}
 	
 	
 	
+	@Override
 	public CountryInfo getCountryInfo(String ip) throws GeoInfoException
 	{
 		InetAddress ipAddress;
@@ -67,8 +70,5 @@ public class MaxmindWebServiceGeoInfoProvider implements IGeoInfoProvider {
 	public void setLicenseKey(String licenseKey) {
 		this.licenseKey = licenseKey;
 	}
-
-
-	
 
 }
