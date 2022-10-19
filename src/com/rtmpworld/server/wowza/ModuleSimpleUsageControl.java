@@ -536,7 +536,6 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 */
 	private void validateGeoRestrictions(StreamingSessionTarget target, List<String> allowedFrom, List<String> restrictedFrom) throws UsageRestrictionException
 	{
-		CountryInfo info;
 		final GeoRestriction georestriction = new GeoRestriction();
 		final String ip = target.getIPAddress();
 		
