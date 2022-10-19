@@ -3,7 +3,7 @@
 # About
 ---
 
-The **ModuleSimpleUsageControl** module for Wowza Streaming Engine™ media server software can be used to implement usage control on your application. The module allows you to configure various types of limits on your application such as total publishers, total subscribers, publish time, subscribe time and country(location) based limiting via Maxmind GeoIP database or IPWHOIS free api service.
+The **ModuleSimpleUsageControl** module for Wowza Streaming Engine™ media server software can be used to implement usage control on your application. The module allows you to configure various types of limits on your application such as total publishers, total subscribers, publish time, subscribe time and country(location) based limiting via [Maxmind GeoIP database](https://dev.maxmind.com/geoip?lang=en) or [IPWHOIS free api service](https://ipwhois.io/).
 
 
 # Dependency Note
