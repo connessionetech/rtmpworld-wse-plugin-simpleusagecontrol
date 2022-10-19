@@ -6,8 +6,10 @@ import com.maxmind.geoip2.exception.GeoIp2Exception;
 import com.maxmind.geoip2.model.CountryResponse;
 import com.maxmind.geoip2.record.Country;
 import com.rtmpworld.server.wowza.CountryInfo;
+import com.rtmpworld.server.wowza.ModuleSimpleUsageControl;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
+import com.wowza.wms.logging.WMSLoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -54,6 +56,7 @@ public class MaxmindWebServiceGeoInfoProvider implements IGeoInfoProvider {
 		} 
 		catch (IOException | GeoIp2Exception e) 
 		{
+			WMSLoggerFactory.getLogger(MaxmindWebServiceGeoInfoProvider.class).error(ModuleSimpleUsageControl.MODULE_NAME + ".isResourceActionAllowed => " + e.getMessage());
 			throw new GeoInfoException(e);
 		}
 

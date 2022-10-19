@@ -69,7 +69,7 @@ public class IPWhoIsWebServiceGeoInfoProvider implements IGeoInfoProvider {
 		}
 		catch(Exception e)
 		{
-			WMSLoggerFactory.getLogger(ModuleSimpleUsageControl.class).error(ModuleSimpleUsageControl.MODULE_NAME + ".isResourceActionAllowed => " + e.getMessage());
+			WMSLoggerFactory.getLogger(IPWhoIsWebServiceGeoInfoProvider.class).error(ModuleSimpleUsageControl.MODULE_NAME + ".isResourceActionAllowed => " + e.getMessage());
 		}
 		
 		return geoinfo;
