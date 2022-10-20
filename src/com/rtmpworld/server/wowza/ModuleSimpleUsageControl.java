@@ -58,6 +58,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private static String PROP_RESTRICTIONS_RULE_PATH = PROP_NAME_PREFIX + "RestrictionsRulePath";
 	
 	private static String PROP_MAXMIND_ACCOUNT_ID = PROP_NAME_PREFIX + "MaxmindAccountId";
+	private static String PROP_MAXMIND_DB_PATH = PROP_NAME_PREFIX + "MaxmindDBPath";
 	private static String PROP_GEO_API_LICENSE_KEY = PROP_NAME_PREFIX + "GeoApiLicenseKey";
 	
 	
@@ -71,8 +72,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	// for threading
 	private static String PROP_THREADPOOL_SIZE = PROP_NAME_PREFIX + "ThreadPoolSize";
-	private static String PROP_DELAY_FOR_FAILED_REQUESTS = PROP_NAME_PREFIX + "DelayForFailedRequests";
-	private static String PROP_HTTP_MAX_FAIL_RETRIES = PROP_NAME_PREFIX + "HTTPMaxRetries";
+	private static String PROP_THREAD_IDLE_TIMEOUT = PROP_NAME_PREFIX + "ThreadIdleTimeout";
 	private static String PROP_THREADPOOL_TERMINATION_TIMEOUT = PROP_NAME_PREFIX + "ThreadPoolTerminationTimeout";
 	
 	
@@ -80,11 +80,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private static int threadPoolSize;
 	private static int threadIdleTimeout;	
 	private static int threadPoolAwaitTerminationTimeout;
-	private static int httpFailureRetries = 5;
 	
 	
-	private String restrictionsRulePath;	
-	private String geoInfoEndpoint;	
+	private String restrictionsRulePath;
 	private boolean moduleDebug;
 	private boolean logViewerCounts = false;
 	private static boolean serverDebug = false;
@@ -111,9 +109,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			serverDebug = true;
 		
 		threadPoolSize = serverProps.getPropertyInt(PROP_THREADPOOL_SIZE, 5);
-		threadIdleTimeout = serverProps.getPropertyInt(PROP_DELAY_FOR_FAILED_REQUESTS, 60);
+		threadIdleTimeout = serverProps.getPropertyInt(PROP_THREAD_IDLE_TIMEOUT, 20);
 		threadPoolAwaitTerminationTimeout = serverProps.getPropertyInt(PROP_THREADPOOL_TERMINATION_TIMEOUT, 5);
-		httpFailureRetries = serverProps.getPropertyInt(PROP_HTTP_MAX_FAIL_RETRIES, httpFailureRetries);
 		httpRequestThreadPool = new ThreadPoolExecutor(threadPoolSize, threadPoolSize, threadIdleTimeout, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
 		
 		Runtime.getRuntime().addShutdownHook(new Thread()
@@ -421,7 +418,6 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 */
 	private class GeoRestriction{
 		
-		private CountryInfo countryInfo;
 		private boolean checkByAllowed = false;
 		private boolean checkByRestricted = false;
 		
@@ -988,7 +984,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			
 			try
 			{
-				this.maxmindDbPath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_GEO_API_LICENSE_KEY, null);
+				this.maxmindDbPath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_MAXMIND_DB_PATH, null);
 				if(this.maxmindDbPath == null || String.valueOf(this.maxmindDbPath).equalsIgnoreCase("null"))
 				{
 					throw new IOException("Invalid database path");
