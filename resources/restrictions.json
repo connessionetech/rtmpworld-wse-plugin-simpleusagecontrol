@@ -1,0 +1,19 @@
+{
+	"enableRestrictions": true,
+	"maxBytesIn": 0,
+	"maxBytesOut": 0,
+	"ingest": {
+		"maxPublishBitrate": 1000,
+		"maxPublishersCount": 2,
+		"maxPublishTime": 0,
+		"allowedFromGeo": ["IN"],
+		"restrictFromGeo": []
+	},
+	"egress": {
+		"maxSubscribers": 10,
+		"maxSubscribersPerStream": 10,
+		"maxPlaybackTime": 45,
+		"allowedFromGeo": [],
+		"restrictFromGeo": []
+	}
+}
