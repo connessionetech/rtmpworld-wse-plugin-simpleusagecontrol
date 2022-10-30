@@ -1119,18 +1119,5 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 			}
 		}
-	}	
-	
-
-	public void onConnectAccept(IClient client) {
-		logger.info(MODULE_NAME+".onConnectAccept: " + client.getClientId());
-	}
-
-	public void onConnectReject(IClient client) {
-		getLogger().info(MODULE_NAME+".onConnectReject: " + client.getClientId());
-	}
-
-	public void onDisconnect(IClient client) {
-		getLogger().info(MODULE_NAME+".onDisconnect: " + client.getClientId());
 	}
 }
