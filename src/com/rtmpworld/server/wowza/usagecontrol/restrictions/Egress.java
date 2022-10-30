@@ -1,4 +1,4 @@
-package com.rtmpworld.server.wowza.usagecontrol;
+package com.rtmpworld.server.wowza.usagecontrol.restrictions;
 
 import java.util.List;
 

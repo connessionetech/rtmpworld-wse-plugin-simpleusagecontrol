@@ -4,11 +4,8 @@ import com.wowza.wms.application.*;
 
 import java.io.File;
 import java.io.FileReader;
-import java.util.Date;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -19,12 +16,15 @@ import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
 import com.rtmpworld.server.wowza.decorators.StreamingSessionTarget;
 import com.rtmpworld.server.wowza.enums.StreamingProtocols;
-import com.rtmpworld.server.wowza.usagecontrol.UsageRestrictions;
+import com.rtmpworld.server.wowza.usagecontrol.CountryInfo;
+import com.rtmpworld.server.wowza.usagecontrol.StreamBitrateMonitor;
+import com.rtmpworld.server.wowza.usagecontrol.StreamTimeLimiter;
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.IPWhoIsWebServiceGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindWebServiceGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
+import com.rtmpworld.server.wowza.usagecontrol.restrictions.UsageRestrictions;
 import com.rtmpworld.server.wowza.utils.WowzaUtils;
 import com.wowza.util.IOPerformanceCounter;
 import com.wowza.wms.amf.*;
@@ -60,9 +60,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private static String PROP_MAXMIND_ACCOUNT_ID = PROP_NAME_PREFIX + "MaxmindAccountId";
 	private static String PROP_MAXMIND_DB_PATH = PROP_NAME_PREFIX + "MaxmindDBPath";
 	private static String PROP_GEO_API_LICENSE_KEY = PROP_NAME_PREFIX + "GeoApiLicenseKey";
+	private static String PROP_ALLOW_ON_GEO_FAIL = PROP_NAME_PREFIX + "AllowOnGeoFail";
 	
 	
-	private static String KEY_PUBLISHER = "PUBLISHER";
+	public static String KEY_PUBLISHER = "PUBLISHER";
 	private static String KEY_PUBLISH_TIME = "PUBLISHTIME";
 	private static String KEY_PUBLISH_PROTOCOL = "PUBLISHPROTOCOL";
 	private static String KEY_SUBSCRIBER = "KEY_SUBSCRIBER";
@@ -83,7 +84,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	private String restrictionsRulePath;
-	private boolean moduleDebug;
+	boolean moduleDebug;
 	private boolean logViewerCounts = false;
 	private static boolean serverDebug = false;
 	private Timer timer = null;
@@ -91,6 +92,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private int maxmindAccountId;
 	private String geoApiLicenseKey;
 	private String maxmindDbPath;
+	private boolean allowOnGeoFail;
 
 	
 	private static WMSProperties serverProps = Server.getInstance().getProperties();
@@ -137,6 +139,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
 	/** Decode & return stream name in case it is not straightforward **/
 	private String decodeStreamName(String streamName)
 	{
@@ -158,6 +161,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 
+	
+	
+	
 	/**
 	 * Get viewer count
 	 * 
@@ -273,8 +279,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			}
 			count = rtmpCount + httpCount + rtpCount;
 
-			if (logViewerCounts)
+			if (logViewerCounts) {
 				logger.info(MODULE_NAME + ".getViewerCounts streamName: " + streamName + " total:" + count + " rtmp: " + rtmpCount + " http: " + httpCount + " rtp: " + rtpCount, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+			}
 
 		}
 		return count;
@@ -333,83 +340,6 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
-	
-	
-	/**
-	 * GeoInfoProvider class to help lookup country info from remote url
-	 * using client IP address.
-	 *
-	 */
-	
-	
-	
-	
-	
-	
-	
-	/**
-	 * Class to monitors IMediaStream instance
-	 * for bitrate and terminate session if bitrate 
-	 * exceeds max allowed bitrate.
-	 */
-	private class MonitorStream
-	{
-		int monitorInterval = 5000;
-		Timer mTimer;
-		TimerTask mTask;
-		IMediaStream target;
-		double maxBitrate = 0;
-		
-		public MonitorStream(IMediaStream stream, double maxBitrate)
-		{
-			this.maxBitrate = maxBitrate;
-			this.target = stream;
-			this.init();
-			
-		}
-		
-		private void init()
-		{
-			this.mTask = new TimerTask() {
-
-				@Override
-				public void run() {
-					
-					if (target == null)
-						stop();
-	
-					IOPerformanceCounter perf = target.getMediaIOPerformance();
-					Double bitrate = perf.getMessagesInBytesRate() * 8 * .001;
-						
-					if (moduleDebug) {
-						logger.info(MODULE_NAME + ".MonitorStream.run '" + target.getName() + "' BitRate: " + Math.round(Math.floor(bitrate)) + "kbs, MaxBitrate:" + maxBitrate, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
-						logger.info(MODULE_NAME + ".MonitorStream.run getPublishBitrateVideo = '" + target.getPublishBitrateVideo(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
-					}
-	
-					if (bitrate > maxBitrate && maxBitrate > 0)
-					{	
-						WowzaUtils.terminateSession(appInstance, target);
-					}
-				}
-			};
-		}
-		
-		public void start()
-		{
-			if (mTimer == null)
-				mTimer = new Timer();
-			mTimer.scheduleAtFixedRate(mTask, new Date(), monitorInterval);
-		}
-	
-		public void stop()
-		{
-			if (mTimer != null)
-			{
-				mTimer.cancel();
-				mTimer = null;
-			}
-		}
-	}
 	
 	
 	/**
@@ -565,6 +495,20 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			
 			CompletableFuture<CountryInfo> future = getGeoInfo(ip);
 			future.thenAccept(value -> {
+				
+				// What to do if we are unable to fetch geo info
+				if(value == null) {
+					if(allowOnGeoFail)
+					{
+						return;
+					}
+					else
+					{
+						target.terminateSession();	
+					}
+				}
+				
+				
 				String cc = value.getCountryCode();
 				
 				if(georestriction.isCheckByAllowed())
@@ -606,6 +550,11 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
+	/**
+	 * Fetches geo info via IGeoInfoProvider
+	 * @param ip
+	 * @return
+	 */
 	private CompletableFuture<CountryInfo> getGeoInfo(String ip)
 	{
 		return CompletableFuture.supplyAsync(()->{
@@ -627,74 +576,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
-	
-	/**
-	 * Class Disconnecter implements times disconnect 
-	 * for connected sessions
-	 *
-	 */
-	private class Disconnecter extends TimerTask
-	{
-
-		@Override
-		public synchronized void run()
-		{			
-			Iterator<IClient> clients = appInstance.getClients().iterator();
-			while (clients.hasNext())
-			{
-				IClient client = clients.next();
-				WMSProperties props = client.getProperties();
-				if (restrictions.ingest.maxPublishTime > 0 && client.getTimeRunningSeconds() > restrictions.ingest.maxPublishTime)
-				{
-					if (props.containsKey(KEY_PUBLISHER))
-					{
-						if (moduleDebug)
-							logger.info(MODULE_NAME + ": RTMP disconnecting client " + client.getClientId() + " FlashVer is " + client.getFlashVer(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
-
-						client.setShutdownClient(true);
-					}
-				}
-				
-				
-			}
-
-			Iterator<IHTTPStreamerSession> httpSessions = appInstance.getHTTPStreamerSessions().iterator();
-			while (httpSessions.hasNext())
-			{
-				IHTTPStreamerSession httpSession = httpSessions.next();
-				WMSProperties props = httpSession.getProperties();
-				if (httpSession.getTimeRunningSeconds() > restrictions.ingest.maxPublishTime)
-				{
-					if (props.containsKey(KEY_PUBLISHER))
-					{
-						if (moduleDebug)
-							logger.info(MODULE_NAME + ": HTTP disconnecting session " + httpSession.getSessionId(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
-
-						httpSession.rejectSession();
-					}
-				}
-			}
-
-			Iterator<RTPSession> rtpSessions = appInstance.getRTPSessions().iterator();
-			while (rtpSessions.hasNext())
-			{
-				RTPSession rtpSession = rtpSessions.next();
-				WMSProperties props = rtpSession.getProperties();
-				if (rtpSession.getTimeRunningSeconds() > restrictions.ingest.maxPublishTime)
-				{
-					if (props.containsKey(KEY_PUBLISHER))
-					{
-						if (moduleDebug)
-							logger.info(MODULE_NAME + ": RTSP disconnecting client " + rtpSession.getSessionId(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
-
-						appInstance.getVHost().getRTPContext().shutdownRTPSession(rtpSession);
-					}
-				}
-			}
-		}
-	}
-	
-	
+		
 	
 	class StreamListener extends MediaStreamActionNotifyBase
 	{
@@ -923,7 +805,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			
 			if(restrictions.enableRestrictions)
 			{
-				MonitorStream monitor = new MonitorStream(stream, restrictions.ingest.maxPublishBitrate);
+				StreamBitrateMonitor monitor = new StreamBitrateMonitor(stream, restrictions.ingest.maxPublishBitrate, appInstance, logger, moduleDebug);
 				WMSProperties props = stream.getProperties();
 				synchronized(props)
 				{
@@ -946,11 +828,11 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			if(restrictions.enableRestrictions)
 			{
 				WMSProperties props = stream.getProperties();
-				MonitorStream monitor;
+				StreamBitrateMonitor monitor;
 	
 				synchronized(props)
 				{
-					monitor = (MonitorStream)props.get("monitor");
+					monitor = (StreamBitrateMonitor)props.get("monitor");
 				}
 				if (monitor != null)
 					monitor.stop();
@@ -977,11 +859,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			restrictionsRulePath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_RESTRICTIONS_RULE_PATH, null);
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " reportingEndPoint : " + String.valueOf(restrictionsRulePath));
-			}	
+			}		
+			
+						
+			allowOnGeoFail = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance, PROP_ALLOW_ON_GEO_FAIL, false);
+			if(moduleDebug){
+				logger.info(MODULE_NAME + " allowOnGeoFail : " + String.valueOf(allowOnGeoFail));
+			}
 			
 			
-			// check and initialize appropriate geoinfo provider
-			
+			// check and initialize appropriate geoinfo provider			
 			try
 			{
 				this.maxmindDbPath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_MAXMIND_DB_PATH, null);
@@ -1040,6 +927,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
+	/**
+	 * Loads restrictions definition from restriction file 
+	 */
 	private void loadRestrictions()
 	{
 		try
@@ -1092,10 +983,17 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 
-	public void onAppStart(IApplicationInstance appInstance) {
-		this.logger = getLogger();
+	
+	/**
+	 * onAppStart
+	 * 
+	 * @param appInstance
+	 */
+	public void onAppStart(IApplicationInstance appInstance) {		
 		
 		String fullname = appInstance.getApplication().getName() + "/" + appInstance.getName();
+		
+		this.logger = getLogger();
 		logger.info(MODULE_NAME+".onAppStart: " + fullname);
 		
 		this.appInstance = appInstance;
@@ -1108,22 +1006,18 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			// if restrictions are enabled run timer to scan for connections
 			if(this.restrictions.enableRestrictions) {
 				this.timer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
-				this.timer.schedule(new Disconnecter(), 0, 1000);
+				this.timer.schedule(new StreamTimeLimiter(appInstance, restrictions, logger, moduleDebug), 0, 1000);
 			}
 		}
-		
-		
-		/**
-		Timer timer = new Timer();
-		timer.schedule(new TimerTask() {
-		  @Override
-		  public void run() {
-		    //what you want to do
-			  logger.info("publishers :" + String.valueOf(getPublisherCount()) + " : " + String.valueOf(getPublisherCountUsingProperties()));
-		  }
-		}, 0, 5000);
-		**/
+		else
+		{
+			if(moduleDebug) {
+				logger.info(MODULE_NAME + " => restrictions not specified");
+			}
+		}
 	}
+	
+	
 	
 	
 	public void onStreamCreate(IMediaStream stream)
