@@ -2,8 +2,8 @@ package com.rtmpworld.server.wowza.usagecontrol.dataprovider;
 
 
 import com.google.gson.Gson;
-import com.rtmpworld.server.wowza.CountryInfo;
 import com.rtmpworld.server.wowza.ModuleSimpleUsageControl;
+import com.rtmpworld.server.wowza.usagecontrol.CountryInfo;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
 import com.wowza.wms.logging.WMSLoggerFactory;

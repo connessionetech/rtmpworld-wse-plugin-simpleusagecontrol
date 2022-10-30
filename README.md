@@ -16,4 +16,4 @@ This library is required to be in your classpath if you plan on compiling the pl
 # Documentation
 ---
 
-The detailed documentation on the subject can be found [here]().
+The detailed documentation on the subject can be found [here](https://rtmpworld.com/blog/controlling-limiting-the-usage-of-your-wowza-server-application/).

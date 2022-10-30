@@ -1,4 +1,4 @@
-package com.rtmpworld.server.wowza;
+package com.rtmpworld.server.wowza.usagecontrol;
 
 public class CountryInfo {
 	
