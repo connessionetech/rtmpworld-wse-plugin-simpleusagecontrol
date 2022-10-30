@@ -1017,21 +1017,12 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		}
 	}
 	
-	
-	
-	
-	public void onStreamCreate(IMediaStream stream)
-	{
-		stream.addClientListener(streamListener);
-	}
 
-	
-	public void onStreamDestroy(IMediaStream stream)
-	{
-		stream.removeClientListener(streamListener);
-	}
-	
-
+	/**
+	 * onAppStop
+	 * 
+	 * @param appInstance
+	 */
 	public void onAppStop(IApplicationInstance appInstance) {
 		String fullname = appInstance.getApplication().getName() + "/" + appInstance.getName();
 		logger.info(MODULE_NAME+".onAppStop: " + fullname);
@@ -1041,6 +1032,18 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			timer.cancel();
 		}
 		timer = null;
+	}
+	
+
+	public void onStreamCreate(IMediaStream stream)
+	{
+		stream.addClientListener(streamListener);
+	}
+
+	
+	public void onStreamDestroy(IMediaStream stream)
+	{
+		stream.removeClientListener(streamListener);
 	}
 	
 	
