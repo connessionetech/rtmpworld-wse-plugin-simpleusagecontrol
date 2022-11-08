@@ -406,8 +406,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 */
 	private void validateMaxPublisherRestrictions() throws UsageRestrictionException
 	{
+		getLogger().info(MODULE_NAME + ".validateMaxPublisherRestrictions");
+		
 		int publisherCount = getPublisherCount();
-		if((restrictions.ingest.maxPublishersCount>0) && (publisherCount >= restrictions.ingest.maxPublishersCount))
+		
+		if(moduleDebug) {
+			getLogger().info(MODULE_NAME + ".publisherCount = " + publisherCount);
+		}
+		
+		if((restrictions.ingest.maxPublishersCount>0) && (publisherCount > restrictions.ingest.maxPublishersCount))
 		{
 			throw new UsageRestrictionException("Max publishers restriction reached!!");
 		}
