@@ -465,8 +465,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		final GeoRestriction georestriction = new GeoRestriction();
 		final String ip = target.getIPAddress();
 		
-		if(ip.equalsIgnoreCase("127.0.0.1") || ip.equalsIgnoreCase("localhost")) {
+		
+		// allow unconditionally
+		if(ip.equalsIgnoreCase("127.0.0.1") || ip.equalsIgnoreCase("localhost") || allowedFrom.contains("*")) {
 			return;
+		}
+		
+		
+		// terminate unconditionally
+		if(restrictedFrom.contains("*")) {
+			target.terminateSession();	
 		}
 		
 		
@@ -578,6 +586,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 		
 	
+	/**
+	 * Class for listening to stream events 
+	 */
 	class StreamListener extends MediaStreamActionNotifyBase
 	{
 		@Override
@@ -843,6 +854,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
+	
+	/**
+	 * Read application level properties
+	 */
 	private void readProperties()
 	{ 
 		logger.info(MODULE_NAME + ".readProperties => reading properties");
@@ -956,30 +971,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			restrictions = new UsageRestrictions();
 			logger.error(MODULE_NAME + ".loadRestrictions => Error reading restrictions " +  e.getMessage());
 		}
-	}
-	
-
-	
-	public String getHTTPProtocol(IHTTPStreamerSession session)
-	{
-		String connectionProtocol = "HTTP";
-		switch (session.getSessionProtocol())
-		{
-		case IHTTPStreamerSession.SESSIONPROTOCOL_CUPERTINOSTREAMING:
-			connectionProtocol = "HTTPCupertino";
-			break;
-		case IHTTPStreamerSession.SESSIONPROTOCOL_MPEGDASHSTREAMING:
-			connectionProtocol = "HTTPMpegDash";
-			break;
-		case IHTTPStreamerSession.SESSIONPROTOCOL_SMOOTHSTREAMING:
-			connectionProtocol = "HTTPSmooth";
-			break;
-		case IHTTPStreamerSession.SESSIONPROTOCOL_SANJOSESTREAMING:
-			connectionProtocol = "HTTPSanjose";
-			break;
-		}
-		return connectionProtocol;
-	}
+	}	
 	
 	
 
@@ -1018,6 +1010,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 
+	
+	
 	/**
 	 * onAppStop
 	 * 
@@ -1035,18 +1029,35 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 
+	
+	/**
+	 * Stream create handler	 * 
+	 * @param stream
+	 */
 	public void onStreamCreate(IMediaStream stream)
 	{
 		stream.addClientListener(streamListener);
 	}
 
 	
+	
+	
+	/**
+	 * Stream destroy handler
+	 * @param stream
+	 */
 	public void onStreamDestroy(IMediaStream stream)
 	{
 		stream.removeClientListener(streamListener);
 	}
 	
 	
+	
+	
+	/**
+	 * RTP session handler
+	 * @param rtpSession
+	 */
 	public void onRTPSessionCreate(RTPSession rtpSession) {
 		getLogger().info(MODULE_NAME+".onRTPSessionCreate: " + rtpSession.getSessionId());
 		
@@ -1077,6 +1088,12 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
+	
+	/**
+	 * HTTPSession handler
+	 * @param httpSession
+	 */
 	public void onHTTPSessionCreate(IHTTPStreamerSession httpSession) {
 		getLogger().info(MODULE_NAME+".onHTTPSessionCreate: " + httpSession.getSessionId());
 		
@@ -1101,6 +1118,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 
+	
+	
+	/**
+	 * Connect handler
+	 * 
+	 * @param client
+	 * @param function
+	 * @param params
+	 */
 	public void onConnect(IClient client, RequestFunction function, AMFDataList params) {
 		logger.info(MODULE_NAME+".onConnect: " + client.getClientId());
 		
