@@ -20,6 +20,7 @@ import com.rtmpworld.server.wowza.usagecontrol.CountryInfo;
 import com.rtmpworld.server.wowza.usagecontrol.StreamBitrateMonitor;
 import com.rtmpworld.server.wowza.usagecontrol.StreamTimeLimiter;
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.IPWhoIsWebServiceGeoInfoProvider;
+import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindDBGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindWebServiceGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
@@ -470,17 +471,24 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private void validateGeoRestrictions(StreamingSessionTarget target, List<String> allowedFrom, List<String> restrictedFrom) throws UsageRestrictionException
 	{
 		final GeoRestriction georestriction = new GeoRestriction();
-		final String ip = target.getIPAddress();
+		final String ip = target.getIPAddress(); // "115.240.90.163"
 		
 		
 		// allow unconditionally
 		if(ip.equalsIgnoreCase("127.0.0.1") || ip.equalsIgnoreCase("localhost") || allowedFrom.contains("*")) {
+			if (moduleDebug) {
+				logger.info(MODULE_NAME + ".validateGeoRestrictions => Allowing unconditionally");
+			}
 			return;
 		}
 		
 		
 		// terminate unconditionally
 		if(restrictedFrom.contains("*")) {
+			if (moduleDebug) {
+				logger.info(MODULE_NAME + ".validateGeoRestrictions => Disallowing unconditionally");
+			}
+			
 			target.terminateSession();	
 		}
 		
@@ -504,9 +512,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		
 		if(georestriction.isCheckByAllowed() || georestriction.isCheckByRestricted())
 		{
-			if (moduleDebug)
+			if (moduleDebug) {
 				logger.info(MODULE_NAME + ".validateGeoRestrictions => async fetch");
-			
+			}
 			
 			CompletableFuture<CountryInfo> future = getGeoInfo(ip);
 			future.thenAccept(value -> {
@@ -525,6 +533,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				
 				
 				String cc = value.getCountryCode();
+				
+				if (moduleDebug) {
+					logger.info(MODULE_NAME + ".validateGeoRestrictions => Checking country code " + cc);
+				}
 				
 				if(georestriction.isCheckByAllowed())
 				{
@@ -578,11 +590,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			
 			try 
 			{
+				if(moduleDebug) {
+					logger.info("Looking up geo info for " + ip + " through " + geoInfoProvider.getClass().getCanonicalName());
+				}
+				
 				info = geoInfoProvider.getCountryInfo(ip);
 			} 
 			catch (GeoInfoException e) 
 			{
-				logger.info("Unable to fetch geo information for client ip {}. Cause {}", ip, e);
+				logger.error("Unable to fetch geo information for client ip {}. Cause {}", ip, e);
 			}
 			
 			return info;
@@ -880,7 +896,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			
 			restrictionsRulePath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_RESTRICTIONS_RULE_PATH, null);
 			if(moduleDebug){
-				logger.info(MODULE_NAME + " reportingEndPoint : " + String.valueOf(restrictionsRulePath));
+				logger.info(MODULE_NAME + " restrictionsRulePath : " + String.valueOf(restrictionsRulePath));
 			}		
 			
 						
@@ -900,10 +916,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 				else
 				{
+					if(moduleDebug) {
+						logger.info("maxmindDbPath = " + this.maxmindDbPath);
+					}
+					
 					File database = new File(this.maxmindDbPath);
 					if(!database.exists()) {
 						throw new IOException("Database does not exist in specified path");
 					}
+					
+					geoInfoProvider = new MaxmindDBGeoInfoProvider(this.maxmindDbPath);
 				}				
 			}
 			catch(IOException ie)
@@ -914,6 +936,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				if(this.geoApiLicenseKey == null || String.valueOf(this.geoApiLicenseKey).equalsIgnoreCase("null")){
 					throw new IOException("No valid license key specified for geoapi services");
 					// exit with exception
+				}
+				
+				if(moduleDebug) {
+					logger.info("geoApiLicenseKey = " + this.geoApiLicenseKey);
 				}
 				
 				// if license specified try to look for maxmind account id
@@ -936,9 +962,14 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 			}
 			
+			if(moduleDebug){
+				logger.info(MODULE_NAME + " geoInfoProvider : " + String.valueOf(geoInfoProvider));
+			}
+			
 			// initialize geoInfoProvider
 			if(geoInfoProvider != null){
 				geoInfoProvider.initialize();
+				geoInfoProvider.setLogger(getLogger());
 			}			
 			
 		}
