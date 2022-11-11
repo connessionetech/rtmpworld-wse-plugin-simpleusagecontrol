@@ -67,7 +67,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	public static String KEY_PUBLISHER = "PUBLISHER";
 	private static String KEY_PUBLISH_TIME = "PUBLISHTIME";
 	private static String KEY_PUBLISH_PROTOCOL = "PUBLISHPROTOCOL";
-	private static String KEY_SUBSCRIBER = "KEY_SUBSCRIBER";
+	public static String KEY_SUBSCRIBER = "KEY_SUBSCRIBER";
 	private static String KEY_SUBSCRIBE_TIME = "SUBSCRIBETIME";
 	private static String KEY_SUBSCRIBE_PROTOCOL = "SUBSCRIBEPROTOCOL";
 	
@@ -430,10 +430,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * @param streamName
 	 * @throws UsageRestrictionException
 	 */
-	private void validateMaxViewerRestrictions(String streamName) throws UsageRestrictionException
+	private void validateMaxViewerRestrictionsPerStream(String streamName) throws UsageRestrictionException
 	{
 		int viewerCount = getStreamViewerCounts(streamName);
-		if((restrictions.egress.maxSubscribersPerStream>0) && (viewerCount >= restrictions.egress.maxSubscribersPerStream))
+		if((restrictions.egress.maxSubscribersPerStream>0) && (viewerCount > restrictions.egress.maxSubscribersPerStream))
 		{
 			throw new UsageRestrictionException("Max viewer per stream restriction reached!!");
 		}
@@ -447,10 +447,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * 
 	 * @throws UsageRestrictionException
 	 */
-	private void validateTotalViewerRestrictions() throws UsageRestrictionException
+	private void validateMaxViewerRestrictions() throws UsageRestrictionException
 	{
 		int viewerCount = getTotalViewerCounts(null);
-		if((restrictions.egress.maxSubscribers>0) && (viewerCount >= restrictions.egress.maxSubscribers))
+		
+		if(moduleDebug) {
+			logger.info("Total viewer count = " + viewerCount);
+		}
+		
+		if((restrictions.egress.maxSubscribers>0) && (viewerCount > restrictions.egress.maxSubscribers))
 		{
 			throw new UsageRestrictionException("Max total viewer restriction reached!!");
 		}
@@ -642,7 +647,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				/** Max total viewers restriction check**/
 				try
 				{
-					validateTotalViewerRestrictions();
+					validateMaxViewerRestrictions();
 				}
 				catch (UsageRestrictionException e) 
 				{
@@ -659,7 +664,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				try
 				{
 					String truStreamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
-					validateMaxViewerRestrictions(truStreamName);
+					validateMaxViewerRestrictionsPerStream(truStreamName);
 				}
 				catch (UsageRestrictionException e) 
 				{
@@ -1136,23 +1141,43 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		getLogger().info(MODULE_NAME+".onHTTPSessionCreate: " + httpSession.getSessionId());
 		
 		String streamName = httpSession.getStreamName();
-		int count = getStreamViewerCounts(streamName);
 		
 		if(restrictions.enableRestrictions)
-		{
-			try 
+		{	
+			/** Max total viewers restriction check**/
+			try
 			{
-				this.validateApplicationBandwidthUsageRestrictions();
-			} 
+				validateMaxViewerRestrictions();
+			}
 			catch (UsageRestrictionException e) 
 			{
 				if(moduleDebug) {
-					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session on max total viewer restriction violation.(" + e.getMessage() + ").");
 				}
 				
 				WowzaUtils.terminateSession(appInstance, httpSession);
 			}
-		}
+			
+			
+			
+			/** Max viewers per stream restriction check**/
+			try
+			{
+				String truStreamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
+				validateMaxViewerRestrictionsPerStream(truStreamName);
+			}
+			catch (UsageRestrictionException e) 
+			{
+				if(moduleDebug) {
+					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session on max viewer per stream restriction violation for stream "+ streamName +"(" + e.getMessage() + ").");
+				}
+				
+				WowzaUtils.terminateSession(appInstance, httpSession);
+			}
+						
+		}		
+		
+		
 	}
 	
 
