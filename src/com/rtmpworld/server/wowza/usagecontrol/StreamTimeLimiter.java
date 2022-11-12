@@ -4,6 +4,8 @@ import java.util.Iterator;
 import java.util.TimerTask;
 
 import com.rtmpworld.server.wowza.ModuleSimpleUsageControl;
+import com.rtmpworld.server.wowza.decorators.StreamingSessionTarget;
+import com.rtmpworld.server.wowza.usagecontrol.interfaces.IClientSessionManager;
 import com.rtmpworld.server.wowza.usagecontrol.restrictions.UsageRestrictions;
 import com.wowza.wms.application.IApplicationInstance;
 import com.wowza.wms.application.WMSProperties;
@@ -15,6 +17,7 @@ import com.wowza.wms.rtp.model.RTPSession;
 
 public class StreamTimeLimiter  extends TimerTask {
 	
+	IClientSessionManager sessionManager;
 	IApplicationInstance appInstance;
 	UsageRestrictions restrictions;
 	boolean debug;
@@ -23,9 +26,10 @@ public class StreamTimeLimiter  extends TimerTask {
 	
 	
 
-	public StreamTimeLimiter(IApplicationInstance appInstance, UsageRestrictions restrictions, WMSLogger logger, boolean debug) {
+	public StreamTimeLimiter(IApplicationInstance appInstance, UsageRestrictions restrictions, IClientSessionManager sessionManager, WMSLogger logger, boolean debug) {
 		this.appInstance = appInstance;
 		this.restrictions = restrictions;
+		this.sessionManager = sessionManager;
 		this.logger = logger;
 		this.debug = debug;
 	}
@@ -54,6 +58,7 @@ public class StreamTimeLimiter  extends TimerTask {
 						logger.info(ModuleSimpleUsageControl.MODULE_NAME + ": RTMP disconnecting publisher client " + client.getClientId() + " FlashVer is " + client.getFlashVer(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
 
 					client.setShutdownClient(true);
+					sessionManager.addSession(new StreamingSessionTarget(appInstance, client));
 				}
 			}
 			
@@ -66,6 +71,7 @@ public class StreamTimeLimiter  extends TimerTask {
 						logger.info(ModuleSimpleUsageControl.MODULE_NAME + ": RTMP disconnecting subscriber client " + client.getClientId() + " FlashVer is " + client.getFlashVer(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
 
 					client.setShutdownClient(true);
+					sessionManager.addSession(new StreamingSessionTarget(appInstance, client));
 				}				
 			}
 			
@@ -90,6 +96,8 @@ public class StreamTimeLimiter  extends TimerTask {
 				
 				httpSession.rejectSession();
 				httpSession.shutdown();
+				
+				sessionManager.addSession(new StreamingSessionTarget(appInstance, httpSession));
 			}		
 			
 		}

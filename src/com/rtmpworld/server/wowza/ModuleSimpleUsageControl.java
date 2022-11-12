@@ -4,9 +4,14 @@ import com.wowza.wms.application.*;
 
 import java.io.File;
 import java.io.FileReader;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Timer;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -24,6 +29,7 @@ import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindDBGeoInfoProv
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindWebServiceGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
+import com.rtmpworld.server.wowza.usagecontrol.interfaces.IClientSessionManager;
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.restrictions.UsageRestrictions;
 import com.rtmpworld.server.wowza.utils.WowzaUtils;
@@ -46,7 +52,7 @@ import com.wowza.wms.logging.WMSLogger;
 import com.wowza.wms.logging.WMSLoggerFactory;
 import com.wowza.wms.logging.WMSLoggerIDs;
 
-public class ModuleSimpleUsageControl extends ModuleBase {
+public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessionManager {
 	
 	private IApplicationInstance appInstance;
 	private UsageRestrictions restrictions;	
@@ -54,6 +60,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private StreamListener streamListener = new StreamListener();
 	private RTSPListener rtspListener = new RTSPListener();
 
+	
+	private Map<Long, String> httpSessionCache = new ConcurrentHashMap<Long, String>();
+	private Map<Long, String> rtmpSessionCache = new ConcurrentHashMap<Long, String>();
+	private long sessionCacheDuration = 600000; // 10 minutes
 	
 	
 	// module name and property name prefix
@@ -500,7 +510,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				logger.info(MODULE_NAME + ".validateGeoRestrictions => Disallowing unconditionally");
 			}
 			
-			target.terminateSession();	
+			target.terminateSession();
+			addSession(target);
 		}
 		
 		
@@ -538,7 +549,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					else
 					{
-						target.terminateSession();	
+						target.terminateSession();
+						addSession(target);
 					}
 				}
 				
@@ -557,7 +569,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 							logger.info(MODULE_NAME + ".validateGeoRestrictions => country code not in list of allowed");
 						
 						
-						target.terminateSession();							
+						target.terminateSession();
+						addSession(target);
 					}
 					else
 					{
@@ -574,6 +587,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 						
 						
 						target.terminateSession();
+						addSession(target);
 					}
 					else
 					{
@@ -688,9 +702,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			//logger.info(MODULE_NAME + " RTSPListener.onTeardown");
 			super.onTeardown(arg0, arg1, arg2);
 		}
-
 				
 	}
+	
 	
 	
 		
@@ -737,6 +751,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 				
@@ -754,6 +769,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 				
@@ -771,6 +787,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 			}
@@ -852,6 +869,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 				
@@ -867,6 +885,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 			}
 			
@@ -1122,7 +1141,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			// if restrictions are enabled run timer to scan for connections
 			if(this.restrictions.enableRestrictions) {
 				this.timer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
-				this.timer.schedule(new StreamTimeLimiter(appInstance, restrictions, logger, moduleDebug), 0, 1000);
+				this.timer.schedule(new StreamTimeLimiter(appInstance, restrictions, this, logger, moduleDebug), 0, 1000);
 			}
 		}
 		else
@@ -1265,7 +1284,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 */
 	public void onHTTPSessionCreate(IHTTPStreamerSession httpSession) {
 		getLogger().info(MODULE_NAME+".onHTTPSessionCreate: " + httpSession.getSessionId());
-		
+				
 		String streamName = httpSession.getStreamName();
 		
 		if(restrictions.enableRestrictions)
@@ -1282,6 +1301,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 				
 				WowzaUtils.terminateSession(appInstance, httpSession);
+				addSession(new StreamingSessionTarget(appInstance, httpSession));
 			}
 			
 			
@@ -1299,6 +1319,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 				
 				WowzaUtils.terminateSession(appInstance, httpSession);
+				addSession(new StreamingSessionTarget(appInstance, httpSession));
 			}
 						
 		}		
@@ -1318,11 +1339,14 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 */
 	public void onConnect(IClient client, RequestFunction function, AMFDataList params) {
 		logger.info(MODULE_NAME+".onConnect: " + client.getClientId());
-		
+				
 		if(restrictions.enableRestrictions)
 		{
 			if(WowzaUtils.isRTMPClient(client))
 			{
+				
+				
+				/*
 				try 
 				{
 					this.validateApplicationBandwidthUsageRestrictions();
@@ -1335,7 +1359,107 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					
 					WowzaUtils.terminateSession(appInstance, client);
 				}
+				*/
 			}
 		}
 	}
+	
+
+
+	@Override
+	public void addSession(StreamingSessionTarget session) 
+	{
+		String sessionId = null;
+		StreamingProtocols protocol = session.getProtocol();
+		switch(protocol)
+		{
+			case RTMP:
+				IClient rclient = (IClient) session.getTarget();
+				sessionId = WowzaUtils.getUniqueIdentifier(rclient);
+				break;
+			
+			case HTTP:
+				IHTTPStreamerSession hclient  = (IHTTPStreamerSession) session.getTarget();
+				sessionId = hclient.getSessionId();
+				break;
+		}
+	}
+
+
+
+
+
+	@Override
+	public boolean hasSession(StreamingSessionTarget session) {
+		
+		String sessionId = null;
+		StreamingProtocols protocol = session.getProtocol();
+		switch(protocol)
+		{
+			case RTMP:
+				IClient rclient = (IClient) session.getTarget();
+				sessionId = WowzaUtils.getUniqueIdentifier(rclient);
+				for(Iterator<Entry<Long, String>> iter = rtmpSessionCache.entrySet().iterator(); iter.hasNext(); ) 
+				{
+				    if (iter.next().getValue().equalsIgnoreCase(sessionId))
+					{
+				    	return true;
+					}
+				}
+				break;
+			
+			case HTTP:
+				IHTTPStreamerSession hclient  = (IHTTPStreamerSession) session.getTarget();
+				sessionId = hclient.getSessionId();
+				for(Iterator<Entry<Long, String>> iter = httpSessionCache.entrySet().iterator(); iter.hasNext(); ) 
+				{
+				    if (iter.next().getValue().equalsIgnoreCase(sessionId))
+					{
+				    	return true;
+					}
+				}
+				break;
+		}
+		
+		return false;
+	}
+
+
+
+
+
+	@Override
+	public void clearSessions() 
+	{
+		// clear expired HTTP session values from sessionCache
+		long httpSessionlimit = System.currentTimeMillis() - sessionCacheDuration;
+		for(Iterator<Long> iter = httpSessionCache.keySet().iterator(); iter.hasNext(); ) 
+		{
+		    if (iter.next() <= httpSessionlimit)
+			{
+		    	iter.remove();
+			}
+			else
+			{
+				break;
+			}
+		}	
+		
+		
+		// clear expired RTMP session values from sessionCache
+		long rtmpSessionlimit = System.currentTimeMillis() - sessionCacheDuration;
+		for(Iterator<Long> iter = rtmpSessionCache.keySet().iterator(); iter.hasNext(); ) 
+		{
+		    if (iter.next() <= rtmpSessionlimit)
+			{
+		    	iter.remove();
+			}
+			else
+			{
+				break;
+			}
+		}	
+		
+	}
+	
 }
