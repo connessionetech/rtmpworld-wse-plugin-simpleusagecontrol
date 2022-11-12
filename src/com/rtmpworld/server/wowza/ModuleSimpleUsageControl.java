@@ -63,7 +63,7 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 	
 	private Map<Long, String> httpSessionCache = new ConcurrentHashMap<Long, String>();
 	private Map<Long, String> rtmpSessionCache = new ConcurrentHashMap<Long, String>();
-	private long sessionCacheDuration = 600000; // 10 minutes
+	private long sessionCacheDuration = 600*1000; // 10 minutes
 	
 	
 	// module name and property name prefix
@@ -78,6 +78,7 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 	private static String PROP_MAXMIND_DB_PATH = PROP_NAME_PREFIX + "MaxmindDBPath";
 	private static String PROP_GEO_API_LICENSE_KEY = PROP_NAME_PREFIX + "GeoApiLicenseKey";
 	private static String PROP_ALLOW_ON_GEO_FAIL = PROP_NAME_PREFIX + "AllowOnGeoFail";
+	private static String PROP_SESSION_CACHE_DURATION = PROP_NAME_PREFIX + "SessionCacheDuration";
 	
 	
 	public static String KEY_PUBLISHER = "PUBLISHER";
@@ -668,9 +669,26 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		}
 
 		@Override
-		public void onPlay(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+		public void onPlay(RTPSession rtpSession, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
 			//logger.info(MODULE_NAME + " RTSPListener.onPlay");
-			super.onPlay(arg0, arg1, arg2);
+			super.onPlay(rtpSession, arg1, arg2);
+			
+			WMSProperties props = rtpSession.getProperties();
+			
+			// if we have properties object set new properties
+			if(props != null)
+			{
+				synchronized(props)
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME+".onPlay (RTP) => setting properties `subscriber` &`protocol` => "+protocol+" on session");
+					}					
+				
+					props.setProperty(KEY_SUBSCRIBER, true);
+					props.setProperty(KEY_SUBSCRIBE_TIME, System.currentTimeMillis());
+					props.setProperty(KEY_SUBSCRIBE_PROTOCOL, StreamingProtocols.RTSP);
+				}
+			}
 		}
 
 		@Override
@@ -999,6 +1017,7 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 			else
 				logger.info(MODULE_NAME + " DEBUG mode is OFF");
 			
+			
 			restrictionsRulePath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_RESTRICTIONS_RULE_PATH, null);
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " restrictionsRulePath : " + String.valueOf(restrictionsRulePath));
@@ -1008,6 +1027,18 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 			allowOnGeoFail = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance, PROP_ALLOW_ON_GEO_FAIL, false);
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " allowOnGeoFail : " + String.valueOf(allowOnGeoFail));
+			}
+			
+			
+			sessionCacheDuration = WowzaUtils.getPropertyValueInt(serverProps, appInstance, PROP_SESSION_CACHE_DURATION, (600 * 1000));
+			if(moduleDebug){
+				logger.info(MODULE_NAME + " sessionCacheDuration : " + String.valueOf(sessionCacheDuration));
+			}
+			
+			
+			if(sessionCacheDuration < 60) {
+				// minimum will be 60 seconds
+				sessionCacheDuration = 60; 
 			}
 			
 			
