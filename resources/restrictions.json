@@ -3,16 +3,16 @@
 	"maxBytesIn": 0,
 	"maxBytesOut": 0,
 	"ingest": {
-		"maxPublishBitrate": 1000,
-		"maxPublishersCount": 2,
+		"maxPublishBitrate": 0,
+		"maxPublishersCount": 0,
 		"maxPublishTime": 0,
 		"allowedFromGeo": ["*"],
 		"restrictFromGeo": []
 	},
 	"egress": {
-		"maxSubscribers": 10,
-		"maxSubscribersPerStream": 10,
-		"maxPlaybackTime": 45,
+		"maxSubscribers": 0,
+		"maxSubscribersPerStream": 0,
+		"maxPlaybackTime": 00,
 		"allowedFromGeo": ["*"],
 		"restrictFromGeo": []
 	}

@@ -27,6 +27,8 @@ import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionExcept
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.restrictions.UsageRestrictions;
 import com.rtmpworld.server.wowza.utils.WowzaUtils;
+import com.rtmpworld.server.wowza.webrtc.constants.WebRTCDirections;
+import com.rtmpworld.server.wowza.webrtc.model.WebRTCJSONStr;
 import com.wowza.util.IOPerformanceCounter;
 import com.wowza.wms.amf.*;
 import com.wowza.wms.client.*;
@@ -36,6 +38,8 @@ import com.wowza.wms.stream.*;
 import com.wowza.wms.stream.mediacaster.MediaStreamMediaCasterUtils;
 import com.wowza.wms.util.ModuleUtils;
 import com.wowza.wms.rtp.model.*;
+import com.wowza.wms.rtsp.RTSPRequestMessage;
+import com.wowza.wms.rtsp.RTSPResponseMessages;
 import com.wowza.wms.server.Server;
 import com.wowza.wms.httpstreamer.model.*;
 import com.wowza.wms.logging.WMSLogger;
@@ -48,6 +52,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private UsageRestrictions restrictions;	
 	private IGeoInfoProvider geoInfoProvider;
 	private StreamListener streamListener = new StreamListener();
+	private RTSPListener rtspListener = new RTSPListener();
+
 	
 	
 	// module name and property name prefix
@@ -612,6 +618,81 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
+	
+	class RTSPListener extends RTSPActionNotifyBase
+	{
+
+		@Override
+		public void onAnnounce(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onAnnounce");
+			super.onAnnounce(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onDescribe(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onDescribe");
+			super.onDescribe(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onGetParameter(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onGetParameter");
+			super.onGetParameter(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onOptions(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onOptions");
+			super.onOptions(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onPause(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onPause");
+			super.onPause(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onPlay(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onPlay");
+			super.onPlay(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onRecord(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onRecord");
+			super.onRecord(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onRedirect(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onRedirect");
+			super.onRedirect(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onSetParameter(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onSetParameter");
+			super.onSetParameter(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onSetup(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onSetup");
+			super.onSetup(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onTeardown(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onTeardown");
+			super.onTeardown(arg0, arg1, arg2);
+		}
+
+				
+	}
+	
+	
 		
 	
 	/**
@@ -1101,16 +1182,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * RTP session handler
 	 * @param rtpSession
 	 */
-	public void onRTPSessionCreate(RTPSession rtpSession) {
-		getLogger().info(MODULE_NAME+".onRTPSessionCreate: " + rtpSession.getSessionId());
+	public void onRTPSessionCreate(RTPSession rtpSession) {	
 		
 		String uri = rtpSession.getUri();
 		RTPUrl url = new RTPUrl(uri);
-		String streamName = url.getStreamName();
+		String streamName = url.getStreamName();				
 		
 		streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName, rtpSession);
-		int viewcount = getStreamViewerCounts(streamName);
-		
+		//int viewcount = getStreamViewerCounts(streamName);
+		/*
 		if(restrictions.enableRestrictions)
 		{
 			try 
@@ -1126,9 +1206,55 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				
 				WowzaUtils.terminateSession(appInstance, rtpSession);
 			}
+		}		
+		*/
+		
+		
+		StreamingProtocols protocol = WowzaUtils.getClientProtocol(rtpSession);
+		
+		switch(protocol)
+		{
+		case RTSP:
+			rtpSession.addActionListener(rtspListener);
+			break;
+			
+		case WEBRTC:
+			WebRTCJSONStr data = new Gson().fromJson(rtpSession.getWebRTCSession().getCommandRequest().getJSONStr(), WebRTCJSONStr.class);
+			WMSProperties props = rtpSession.getProperties();
+			
+			// if we have properties object set new properties
+			if(props != null)
+			{
+				synchronized(props)
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME+".onPlay => setting properties `subscriber` &`protocol` => "+protocol+" on session");
+					}					
+				
+					if(data.direction.toLowerCase().equals(WebRTCDirections.PUBLISH))
+					{
+						props.setProperty(KEY_PUBLISHER, true);
+						props.setProperty(KEY_PUBLISH_TIME, System.currentTimeMillis());
+						props.setProperty(KEY_PUBLISH_PROTOCOL, protocol);
+					}
+					
+					if(data.direction.toLowerCase().equals(WebRTCDirections.PLAY))
+					{
+						props.setProperty(KEY_SUBSCRIBER, true);
+						props.setProperty(KEY_SUBSCRIBE_TIME, System.currentTimeMillis());
+						props.setProperty(KEY_SUBSCRIBE_PROTOCOL, protocol);
+					}
+				}
+			}			
+			break;
+			
+		default:
+			logger.info("Unexpected protocol " + String.valueOf(protocol));
+			break;
 		}
-
 	}
+	
+	
 	
 	
 	
