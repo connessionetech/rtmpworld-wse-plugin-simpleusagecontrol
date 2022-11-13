@@ -86,7 +86,7 @@ public class StreamTimeLimiter  extends TimerTask {
 		while (httpSessions.hasNext())
 		{
 			IHTTPStreamerSession httpSession = httpSessions.next();
-			WMSProperties props = httpSession.getProperties();
+			//WMSProperties props = httpSession.getProperties();
 			logger.info("session id " + httpSession.getSessionId() + " : maxPlaybackTime: " + restrictions.egress.maxPlaybackTime + " getTimeRunningSeconds() = " + httpSession.getTimeRunningSeconds());
 			if (restrictions.egress.maxPlaybackTime > 0 && httpSession.getTimeRunningSeconds() > restrictions.egress.maxPlaybackTime)
 			{

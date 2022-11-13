@@ -4,9 +4,9 @@ public class UsageRestrictions {
 	
 	public boolean enableRestrictions = false;
 	
-	public long maxBytesIn = 0;
+	public long maxMegaBytesIn = 0;
 	
-	public long maxBytesOut = 0;
+	public long maxMegaBytesOut = 0;
 	
 	public Ingest ingest;
 	
@@ -14,8 +14,8 @@ public class UsageRestrictions {
 
 	@Override
 	public String toString() {
-		return "UsageRestrictions [enableRestrictions=" + enableRestrictions + ", maxBandwidthIn=" + maxBytesIn
-				+ ", maxBandwidthOut=" + maxBytesOut + ", ingest=" + ingest + ", egress=" + egress + "]";
+		return "UsageRestrictions [enableRestrictions=" + enableRestrictions + ", maxBandwidthIn=" + maxMegaBytesIn
+				+ ", maxBandwidthOut=" + maxMegaBytesOut + ", ingest=" + ingest + ", egress=" + egress + "]";
 	}
 
 	

@@ -1,7 +1,7 @@
 {
 	"enableRestrictions": true,
-	"maxBytesIn": 0,
-	"maxBytesOut": 0,
+	"maxMegaBytesIn": 0,
+	"maxMegaBytesOut": 0,
 	"ingest": {
 		"maxPublishBitrate": 0,
 		"maxPublishersCount": 0,
@@ -12,7 +12,7 @@
 	"egress": {
 		"maxSubscribers": 0,
 		"maxSubscribersPerStream": 0,
-		"maxPlaybackTime": 00,
+		"maxPlaybackTime": 0,
 		"allowedFromGeo": ["*"],
 		"restrictFromGeo": []
 	}

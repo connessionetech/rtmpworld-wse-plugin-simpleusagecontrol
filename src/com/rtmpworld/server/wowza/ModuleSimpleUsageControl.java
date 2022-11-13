@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Timer;
-import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -402,13 +401,21 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		IOPerformanceCounter perf = appInstance.getIOPerformanceCounter();
 		double bytesIn = perf.getMessagesInBytes();
 		double bytesOut = perf.getMessagesOutBytes();
+		double megaBytesIn = bytesIn/1048576;
+		double megaBytesOut = bytesOut/1048576;
 		
-		if((restrictions.maxBytesIn>0) && (bytesIn > restrictions.maxBytesIn))
+		if(moduleDebug) {
+			//logger.info("bytesIn = " + String.valueOf(bytesIn) + " bytesOut = " + String.valueOf(bytesOut));
+			logger.info("megaBytesIn = " + String.valueOf(megaBytesIn) + " megaBytesOut = " + String.valueOf(megaBytesOut));
+			logger.info("maxMegaBytesIn = " + String.valueOf(restrictions.maxMegaBytesIn) + " maxMegaBytesOut = " + String.valueOf(restrictions.maxMegaBytesOut));
+		}
+		
+		if((restrictions.maxMegaBytesIn>0) && (bytesIn > restrictions.maxMegaBytesIn))
 		{
 			throw new UsageRestrictionException("Max bytes-In restriction breached!!");
 		}
 		
-		if((restrictions.maxBytesOut>0) && (bytesOut > restrictions.maxBytesOut))
+		if((restrictions.maxMegaBytesOut>0) && (bytesOut > restrictions.maxMegaBytesOut))
 		{
 			throw new UsageRestrictionException("Max bytes-Out restriction breached!!");
 		}
@@ -673,6 +680,8 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 			//logger.info(MODULE_NAME + " RTSPListener.onPlay");
 			super.onPlay(rtpSession, arg1, arg2);
 			
+			StreamingProtocols protocol = WowzaUtils.getClientProtocol(rtpSession);  
+			
 			WMSProperties props = rtpSession.getProperties();
 			
 			// if we have properties object set new properties
@@ -681,7 +690,7 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 				synchronized(props)
 				{
 					if(moduleDebug) {
-						logger.info(MODULE_NAME+".onPlay (RTP) => setting properties `subscriber` &`protocol` => "+protocol+" on session");
+						logger.info(MODULE_NAME+".onPlay (RTP) => setting properties `subscriber` &`protocol` => "+ String.valueOf(protocol) +" on session");
 					}					
 				
 					props.setProperty(KEY_SUBSCRIBER, true);
@@ -1240,9 +1249,10 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		
 		streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName, rtpSession);
 		//int viewcount = getStreamViewerCounts(streamName);
-		/*
+		
 		if(restrictions.enableRestrictions)
 		{
+			/** Application bandwidth consumption check **/
 			try 
 			{
 				this.validateApplicationBandwidthUsageRestrictions();
@@ -1255,9 +1265,9 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 				
 				
 				WowzaUtils.terminateSession(appInstance, rtpSession);
+				closeAllClients();
 			}
-		}		
-		*/
+		}
 		
 		
 		StreamingProtocols protocol = WowzaUtils.getClientProtocol(rtpSession);
@@ -1319,7 +1329,24 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		String streamName = httpSession.getStreamName();
 		
 		if(restrictions.enableRestrictions)
-		{	
+		{				
+			/** Application bandwidth consumption check **/
+			try 
+			{
+				this.validateApplicationBandwidthUsageRestrictions();
+			} 
+			catch (UsageRestrictionException e) 
+			{
+				if(moduleDebug) {
+					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
+				}
+				
+				
+				WowzaUtils.terminateSession(appInstance, httpSession);
+				closeAllClients();
+			}
+			
+			
 			/** Max total viewers restriction check**/
 			try
 			{
@@ -1374,10 +1401,8 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		if(restrictions.enableRestrictions)
 		{
 			if(WowzaUtils.isRTMPClient(client))
-			{
-				
-				
-				/*
+			{				
+				/** Application bandwidth consumption check **/
 				try 
 				{
 					this.validateApplicationBandwidthUsageRestrictions();
@@ -1389,9 +1414,49 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 					}
 					
 					WowzaUtils.terminateSession(appInstance, client);
+					closeAllClients();
 				}
-				*/
 			}
+		}
+	}
+	
+	
+	
+	public void closeAllClients()
+	{
+		/**
+		 * Checking RTMP clients 
+		 */
+		Iterator<IClient> clients = appInstance.getClients().iterator();
+		while (clients.hasNext())
+		{
+			IClient client = clients.next();
+			client.setShutdownClient(true);			
+		}
+
+		
+		
+		/**
+		 * Testing HLS clients
+		 */
+		Iterator<IHTTPStreamerSession> httpSessions = appInstance.getHTTPStreamerSessions().iterator();
+		while (httpSessions.hasNext())
+		{
+			IHTTPStreamerSession httpSession = httpSessions.next();
+			httpSession.rejectSession();
+			httpSession.shutdown();
+		}
+
+		
+		
+		/**
+		 * Checking RTP clients (RTSP & WebRTC)
+		 */
+		Iterator<RTPSession> rtpSessions = appInstance.getRTPSessions().iterator();
+		while (rtpSessions.hasNext())
+		{
+			RTPSession rtpSession = rtpSessions.next();			
+			appInstance.getVHost().getRTPContext().shutdownRTPSession(rtpSession);
 		}
 	}
 	
@@ -1401,18 +1466,25 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 	public void addSession(StreamingSessionTarget session) 
 	{
 		String sessionId = null;
+		
 		StreamingProtocols protocol = session.getProtocol();
 		switch(protocol)
 		{
 			case RTMP:
 				IClient rclient = (IClient) session.getTarget();
 				sessionId = WowzaUtils.getUniqueIdentifier(rclient);
+				rtmpSessionCache.put(System.currentTimeMillis(), sessionId);
 				break;
 			
 			case HTTP:
 				IHTTPStreamerSession hclient  = (IHTTPStreamerSession) session.getTarget();
 				sessionId = hclient.getSessionId();
+				httpSessionCache.put(System.currentTimeMillis(), sessionId);
 				break;
+				
+		default:
+				logger.debug("Protocol not applicable for session tracking");
+			break;
 		}
 	}
 
@@ -1449,6 +1521,10 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 				    	return true;
 					}
 				}
+				break;
+			
+			default:
+				logger.debug("Protocol not applicable for session tracking");
 				break;
 		}
 		
