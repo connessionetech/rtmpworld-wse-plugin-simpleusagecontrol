@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -104,7 +105,9 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 	boolean moduleDebug;
 	private boolean logViewerCounts = false;
 	private static boolean serverDebug = false;
-	private Timer timer = null;
+	private Timer streamTimeLimitTimer = null;
+	private Timer appUsageLimitTimer = null;
+	
 	
 	private int maxmindAccountId;
 	private String geoApiLicenseKey;
@@ -405,7 +408,6 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		double megaBytesOut = bytesOut/1048576;
 		
 		if(moduleDebug) {
-			//logger.info("bytesIn = " + String.valueOf(bytesIn) + " bytesOut = " + String.valueOf(bytesOut));
 			logger.info("megaBytesIn = " + String.valueOf(megaBytesIn) + " megaBytesOut = " + String.valueOf(megaBytesOut));
 			logger.info("maxMegaBytesIn = " + String.valueOf(restrictions.maxMegaBytesIn) + " maxMegaBytesOut = " + String.valueOf(restrictions.maxMegaBytesOut));
 		}
@@ -1178,10 +1180,32 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		{
 			loadRestrictions();
 			
-			// if restrictions are enabled run timer to scan for connections
+			// if restrictions are enabled run timer for limiting stream time
 			if(this.restrictions.enableRestrictions) {
-				this.timer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
-				this.timer.schedule(new StreamTimeLimiter(appInstance, restrictions, this, logger, moduleDebug), 0, 1000);
+				this.streamTimeLimitTimer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
+				this.streamTimeLimitTimer.schedule(new StreamTimeLimiter(appInstance, restrictions, this, logger, moduleDebug), 0, 1000);
+			}
+			
+			// if restrictions are enabled run timer for limiting application data usage
+			if(this.restrictions.enableRestrictions) {
+				this.appUsageLimitTimer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
+				this.appUsageLimitTimer.schedule(new TimerTask() {
+
+					@Override
+					public void run() {
+						
+						/** Application bandwidth consumption check **/
+						try 
+						{
+							validateApplicationBandwidthUsageRestrictions();
+						} 
+						catch (UsageRestrictionException e) 
+						{
+							closeAllClients();
+						}
+					}
+					
+				}, 0, 1000);
 			}
 		}
 		else
@@ -1204,11 +1228,11 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		String fullname = appInstance.getApplication().getName() + "/" + appInstance.getName();
 		logger.info(MODULE_NAME+".onAppStop: " + fullname);
 
-		if (timer != null)
+		if (streamTimeLimitTimer != null)
 		{
-			timer.cancel();
+			streamTimeLimitTimer.cancel();
 		}
-		timer = null;
+		streamTimeLimitTimer = null;
 	}
 	
 
