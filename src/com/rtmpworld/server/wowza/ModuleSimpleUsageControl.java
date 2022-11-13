@@ -4,9 +4,14 @@ import com.wowza.wms.application.*;
 
 import java.io.File;
 import java.io.FileReader;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -20,12 +25,16 @@ import com.rtmpworld.server.wowza.usagecontrol.CountryInfo;
 import com.rtmpworld.server.wowza.usagecontrol.StreamBitrateMonitor;
 import com.rtmpworld.server.wowza.usagecontrol.StreamTimeLimiter;
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.IPWhoIsWebServiceGeoInfoProvider;
+import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindDBGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.dataprovider.MaxmindWebServiceGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.UsageRestrictionException;
+import com.rtmpworld.server.wowza.usagecontrol.interfaces.IClientSessionManager;
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
 import com.rtmpworld.server.wowza.usagecontrol.restrictions.UsageRestrictions;
 import com.rtmpworld.server.wowza.utils.WowzaUtils;
+import com.rtmpworld.server.wowza.webrtc.constants.WebRTCDirections;
+import com.rtmpworld.server.wowza.webrtc.model.WebRTCJSONStr;
 import com.wowza.util.IOPerformanceCounter;
 import com.wowza.wms.amf.*;
 import com.wowza.wms.client.*;
@@ -35,18 +44,26 @@ import com.wowza.wms.stream.*;
 import com.wowza.wms.stream.mediacaster.MediaStreamMediaCasterUtils;
 import com.wowza.wms.util.ModuleUtils;
 import com.wowza.wms.rtp.model.*;
+import com.wowza.wms.rtsp.RTSPRequestMessage;
+import com.wowza.wms.rtsp.RTSPResponseMessages;
 import com.wowza.wms.server.Server;
 import com.wowza.wms.httpstreamer.model.*;
 import com.wowza.wms.logging.WMSLogger;
 import com.wowza.wms.logging.WMSLoggerFactory;
 import com.wowza.wms.logging.WMSLoggerIDs;
 
-public class ModuleSimpleUsageControl extends ModuleBase {
+public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessionManager {
 	
 	private IApplicationInstance appInstance;
 	private UsageRestrictions restrictions;	
 	private IGeoInfoProvider geoInfoProvider;
 	private StreamListener streamListener = new StreamListener();
+	private RTSPListener rtspListener = new RTSPListener();
+
+	
+	private Map<Long, String> httpSessionCache = new ConcurrentHashMap<Long, String>();
+	private Map<Long, String> rtmpSessionCache = new ConcurrentHashMap<Long, String>();
+	private long sessionCacheDuration = 600*1000; // 10 minutes
 	
 	
 	// module name and property name prefix
@@ -61,12 +78,13 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private static String PROP_MAXMIND_DB_PATH = PROP_NAME_PREFIX + "MaxmindDBPath";
 	private static String PROP_GEO_API_LICENSE_KEY = PROP_NAME_PREFIX + "GeoApiLicenseKey";
 	private static String PROP_ALLOW_ON_GEO_FAIL = PROP_NAME_PREFIX + "AllowOnGeoFail";
+	private static String PROP_SESSION_CACHE_DURATION = PROP_NAME_PREFIX + "SessionCacheDuration";
 	
 	
 	public static String KEY_PUBLISHER = "PUBLISHER";
 	private static String KEY_PUBLISH_TIME = "PUBLISHTIME";
 	private static String KEY_PUBLISH_PROTOCOL = "PUBLISHPROTOCOL";
-	private static String KEY_SUBSCRIBER = "KEY_SUBSCRIBER";
+	public static String KEY_SUBSCRIBER = "KEY_SUBSCRIBER";
 	private static String KEY_SUBSCRIBE_TIME = "SUBSCRIBETIME";
 	private static String KEY_SUBSCRIBE_PROTOCOL = "SUBSCRIBEPROTOCOL";
 	
@@ -87,7 +105,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	boolean moduleDebug;
 	private boolean logViewerCounts = false;
 	private static boolean serverDebug = false;
-	private Timer timer = null;
+	private Timer streamTimeLimitTimer = null;
+	private Timer appUsageLimitTimer = null;
+	
 	
 	private int maxmindAccountId;
 	private String geoApiLicenseKey;
@@ -384,13 +404,20 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		IOPerformanceCounter perf = appInstance.getIOPerformanceCounter();
 		double bytesIn = perf.getMessagesInBytes();
 		double bytesOut = perf.getMessagesOutBytes();
+		double megaBytesIn = bytesIn/1048576;
+		double megaBytesOut = bytesOut/1048576;
 		
-		if((restrictions.maxBytesIn>0) && (bytesIn > restrictions.maxBytesIn))
+		if(moduleDebug) {
+			logger.info("megaBytesIn = " + String.valueOf(megaBytesIn) + " megaBytesOut = " + String.valueOf(megaBytesOut));
+			logger.info("maxMegaBytesIn = " + String.valueOf(restrictions.maxMegaBytesIn) + " maxMegaBytesOut = " + String.valueOf(restrictions.maxMegaBytesOut));
+		}
+		
+		if((restrictions.maxMegaBytesIn>0) && (bytesIn > restrictions.maxMegaBytesIn))
 		{
 			throw new UsageRestrictionException("Max bytes-In restriction breached!!");
 		}
 		
-		if((restrictions.maxBytesOut>0) && (bytesOut > restrictions.maxBytesOut))
+		if((restrictions.maxMegaBytesOut>0) && (bytesOut > restrictions.maxMegaBytesOut))
 		{
 			throw new UsageRestrictionException("Max bytes-Out restriction breached!!");
 		}
@@ -406,8 +433,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 */
 	private void validateMaxPublisherRestrictions() throws UsageRestrictionException
 	{
+		getLogger().info(MODULE_NAME + ".validateMaxPublisherRestrictions");
+		
 		int publisherCount = getPublisherCount();
-		if((restrictions.ingest.maxPublishersCount>0) && (publisherCount >= restrictions.ingest.maxPublishersCount))
+		
+		if(moduleDebug) {
+			getLogger().info(MODULE_NAME + ".publisherCount = " + publisherCount);
+		}
+		
+		if((restrictions.ingest.maxPublishersCount>0) && (publisherCount > restrictions.ingest.maxPublishersCount))
 		{
 			throw new UsageRestrictionException("Max publishers restriction reached!!");
 		}
@@ -422,10 +456,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * @param streamName
 	 * @throws UsageRestrictionException
 	 */
-	private void validateMaxViewerRestrictions(String streamName) throws UsageRestrictionException
+	private void validateMaxViewerRestrictionsPerStream(String streamName) throws UsageRestrictionException
 	{
 		int viewerCount = getStreamViewerCounts(streamName);
-		if((restrictions.egress.maxSubscribersPerStream>0) && (viewerCount >= restrictions.egress.maxSubscribersPerStream))
+		if((restrictions.egress.maxSubscribersPerStream>0) && (viewerCount > restrictions.egress.maxSubscribersPerStream))
 		{
 			throw new UsageRestrictionException("Max viewer per stream restriction reached!!");
 		}
@@ -439,10 +473,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	 * 
 	 * @throws UsageRestrictionException
 	 */
-	private void validateTotalViewerRestrictions() throws UsageRestrictionException
+	private void validateMaxViewerRestrictions() throws UsageRestrictionException
 	{
 		int viewerCount = getTotalViewerCounts(null);
-		if((restrictions.egress.maxSubscribers>0) && (viewerCount >= restrictions.egress.maxSubscribers))
+		
+		if(moduleDebug) {
+			logger.info("Total viewer count = " + viewerCount);
+		}
+		
+		if((restrictions.egress.maxSubscribers>0) && (viewerCount > restrictions.egress.maxSubscribers))
 		{
 			throw new UsageRestrictionException("Max total viewer restriction reached!!");
 		}
@@ -463,10 +502,26 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	private void validateGeoRestrictions(StreamingSessionTarget target, List<String> allowedFrom, List<String> restrictedFrom) throws UsageRestrictionException
 	{
 		final GeoRestriction georestriction = new GeoRestriction();
-		final String ip = target.getIPAddress();
+		final String ip = target.getIPAddress(); // "115.240.90.163"
 		
-		if(ip.equalsIgnoreCase("127.0.0.1") || ip.equalsIgnoreCase("localhost")) {
+		
+		// allow unconditionally
+		if(ip.equalsIgnoreCase("127.0.0.1") || ip.equalsIgnoreCase("localhost") || allowedFrom.contains("*")) {
+			if (moduleDebug) {
+				logger.info(MODULE_NAME + ".validateGeoRestrictions => Allowing unconditionally");
+			}
 			return;
+		}
+		
+		
+		// terminate unconditionally
+		if(restrictedFrom.contains("*")) {
+			if (moduleDebug) {
+				logger.info(MODULE_NAME + ".validateGeoRestrictions => Disallowing unconditionally");
+			}
+			
+			target.terminateSession();
+			addSession(target);
 		}
 		
 		
@@ -489,9 +544,9 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		
 		if(georestriction.isCheckByAllowed() || georestriction.isCheckByRestricted())
 		{
-			if (moduleDebug)
+			if (moduleDebug) {
 				logger.info(MODULE_NAME + ".validateGeoRestrictions => async fetch");
-			
+			}
 			
 			CompletableFuture<CountryInfo> future = getGeoInfo(ip);
 			future.thenAccept(value -> {
@@ -504,12 +559,17 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					else
 					{
-						target.terminateSession();	
+						target.terminateSession();
+						addSession(target);
 					}
 				}
 				
 				
 				String cc = value.getCountryCode();
+				
+				if (moduleDebug) {
+					logger.info(MODULE_NAME + ".validateGeoRestrictions => Checking country code " + cc);
+				}
 				
 				if(georestriction.isCheckByAllowed())
 				{
@@ -519,7 +579,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 							logger.info(MODULE_NAME + ".validateGeoRestrictions => country code not in list of allowed");
 						
 						
-						target.terminateSession();							
+						target.terminateSession();
+						addSession(target);
 					}
 					else
 					{
@@ -536,6 +597,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 						
 						
 						target.terminateSession();
+						addSession(target);
 					}
 					else
 					{
@@ -563,11 +625,15 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			
 			try 
 			{
+				if(moduleDebug) {
+					logger.info("Looking up geo info for " + ip + " through " + geoInfoProvider.getClass().getCanonicalName());
+				}
+				
 				info = geoInfoProvider.getCountryInfo(ip);
 			} 
 			catch (GeoInfoException e) 
 			{
-				logger.info("Unable to fetch geo information for client ip {}. Cause {}", ip, e);
+				logger.error("Unable to fetch geo information for client ip {}. Cause {}", ip, e);
 			}
 			
 			return info;
@@ -576,8 +642,105 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 	
+	
+	
+	class RTSPListener extends RTSPActionNotifyBase
+	{
+
+		@Override
+		public void onAnnounce(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onAnnounce");
+			super.onAnnounce(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onDescribe(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onDescribe");
+			super.onDescribe(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onGetParameter(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onGetParameter");
+			super.onGetParameter(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onOptions(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onOptions");
+			super.onOptions(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onPause(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onPause");
+			super.onPause(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onPlay(RTPSession rtpSession, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onPlay");
+			super.onPlay(rtpSession, arg1, arg2);
+			
+			StreamingProtocols protocol = WowzaUtils.getClientProtocol(rtpSession);  
+			
+			WMSProperties props = rtpSession.getProperties();
+			
+			// if we have properties object set new properties
+			if(props != null)
+			{
+				synchronized(props)
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME+".onPlay (RTP) => setting properties `subscriber` &`protocol` => "+ String.valueOf(protocol) +" on session");
+					}					
+				
+					props.setProperty(KEY_SUBSCRIBER, true);
+					props.setProperty(KEY_SUBSCRIBE_TIME, System.currentTimeMillis());
+					props.setProperty(KEY_SUBSCRIBE_PROTOCOL, StreamingProtocols.RTSP);
+				}
+			}
+		}
+
+		@Override
+		public void onRecord(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onRecord");
+			super.onRecord(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onRedirect(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onRedirect");
+			super.onRedirect(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onSetParameter(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onSetParameter");
+			super.onSetParameter(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onSetup(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onSetup");
+			super.onSetup(arg0, arg1, arg2);
+		}
+
+		@Override
+		public void onTeardown(RTPSession arg0, RTSPRequestMessage arg1, RTSPResponseMessages arg2) {
+			//logger.info(MODULE_NAME + " RTSPListener.onTeardown");
+			super.onTeardown(arg0, arg1, arg2);
+		}
+				
+	}
+	
+	
+	
 		
 	
+	/**
+	 * Class for listening to stream events 
+	 */
 	class StreamListener extends MediaStreamActionNotifyBase
 	{
 		@Override
@@ -608,7 +771,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				/** Max total viewers restriction check**/
 				try
 				{
-					validateTotalViewerRestrictions();
+					validateMaxViewerRestrictions();
 				}
 				catch (UsageRestrictionException e) 
 				{
@@ -617,6 +780,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 				
@@ -625,7 +789,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				try
 				{
 					String truStreamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
-					validateMaxViewerRestrictions(truStreamName);
+					validateMaxViewerRestrictionsPerStream(truStreamName);
 				}
 				catch (UsageRestrictionException e) 
 				{
@@ -634,6 +798,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 				
@@ -651,6 +816,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 			}
@@ -732,6 +898,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 				
 				
@@ -747,6 +914,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, stream);
+					addSession(new StreamingSessionTarget(appInstance, stream));
 				}
 			}
 			
@@ -843,6 +1011,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	
 	
 	
+	
+	/**
+	 * Read application level properties
+	 */
 	private void readProperties()
 	{ 
 		logger.info(MODULE_NAME + ".readProperties => reading properties");
@@ -856,15 +1028,28 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			else
 				logger.info(MODULE_NAME + " DEBUG mode is OFF");
 			
+			
 			restrictionsRulePath = WowzaUtils.getPropertyValueStr(serverProps, appInstance, PROP_RESTRICTIONS_RULE_PATH, null);
 			if(moduleDebug){
-				logger.info(MODULE_NAME + " reportingEndPoint : " + String.valueOf(restrictionsRulePath));
+				logger.info(MODULE_NAME + " restrictionsRulePath : " + String.valueOf(restrictionsRulePath));
 			}		
 			
 						
 			allowOnGeoFail = WowzaUtils.getPropertyValueBoolean(serverProps, appInstance, PROP_ALLOW_ON_GEO_FAIL, false);
 			if(moduleDebug){
 				logger.info(MODULE_NAME + " allowOnGeoFail : " + String.valueOf(allowOnGeoFail));
+			}
+			
+			
+			sessionCacheDuration = WowzaUtils.getPropertyValueInt(serverProps, appInstance, PROP_SESSION_CACHE_DURATION, (600 * 1000));
+			if(moduleDebug){
+				logger.info(MODULE_NAME + " sessionCacheDuration : " + String.valueOf(sessionCacheDuration));
+			}
+			
+			
+			if(sessionCacheDuration < 60) {
+				// minimum will be 60 seconds
+				sessionCacheDuration = 60; 
 			}
 			
 			
@@ -878,10 +1063,16 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 				else
 				{
+					if(moduleDebug) {
+						logger.info("maxmindDbPath = " + this.maxmindDbPath);
+					}
+					
 					File database = new File(this.maxmindDbPath);
 					if(!database.exists()) {
 						throw new IOException("Database does not exist in specified path");
 					}
+					
+					geoInfoProvider = new MaxmindDBGeoInfoProvider(this.maxmindDbPath);
 				}				
 			}
 			catch(IOException ie)
@@ -892,6 +1083,10 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				if(this.geoApiLicenseKey == null || String.valueOf(this.geoApiLicenseKey).equalsIgnoreCase("null")){
 					throw new IOException("No valid license key specified for geoapi services");
 					// exit with exception
+				}
+				
+				if(moduleDebug) {
+					logger.info("geoApiLicenseKey = " + this.geoApiLicenseKey);
 				}
 				
 				// if license specified try to look for maxmind account id
@@ -914,9 +1109,14 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				}
 			}
 			
+			if(moduleDebug){
+				logger.info(MODULE_NAME + " geoInfoProvider : " + String.valueOf(geoInfoProvider));
+			}
+			
 			// initialize geoInfoProvider
 			if(geoInfoProvider != null){
 				geoInfoProvider.initialize();
+				geoInfoProvider.setLogger(getLogger());
 			}			
 			
 		}
@@ -956,30 +1156,7 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 			restrictions = new UsageRestrictions();
 			logger.error(MODULE_NAME + ".loadRestrictions => Error reading restrictions " +  e.getMessage());
 		}
-	}
-	
-
-	
-	public String getHTTPProtocol(IHTTPStreamerSession session)
-	{
-		String connectionProtocol = "HTTP";
-		switch (session.getSessionProtocol())
-		{
-		case IHTTPStreamerSession.SESSIONPROTOCOL_CUPERTINOSTREAMING:
-			connectionProtocol = "HTTPCupertino";
-			break;
-		case IHTTPStreamerSession.SESSIONPROTOCOL_MPEGDASHSTREAMING:
-			connectionProtocol = "HTTPMpegDash";
-			break;
-		case IHTTPStreamerSession.SESSIONPROTOCOL_SMOOTHSTREAMING:
-			connectionProtocol = "HTTPSmooth";
-			break;
-		case IHTTPStreamerSession.SESSIONPROTOCOL_SANJOSESTREAMING:
-			connectionProtocol = "HTTPSanjose";
-			break;
-		}
-		return connectionProtocol;
-	}
+	}	
 	
 	
 
@@ -1003,10 +1180,32 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		{
 			loadRestrictions();
 			
-			// if restrictions are enabled run timer to scan for connections
+			// if restrictions are enabled run timer for limiting stream time
 			if(this.restrictions.enableRestrictions) {
-				this.timer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
-				this.timer.schedule(new StreamTimeLimiter(appInstance, restrictions, logger, moduleDebug), 0, 1000);
+				this.streamTimeLimitTimer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
+				this.streamTimeLimitTimer.schedule(new StreamTimeLimiter(appInstance, restrictions, this, logger, moduleDebug), 0, 1000);
+			}
+			
+			// if restrictions are enabled run timer for limiting application data usage
+			if(this.restrictions.enableRestrictions) {
+				this.appUsageLimitTimer = new Timer(MODULE_NAME + " [" + appInstance.getContextStr() + "]");
+				this.appUsageLimitTimer.schedule(new TimerTask() {
+
+					@Override
+					public void run() {
+						
+						/** Application bandwidth consumption check **/
+						try 
+						{
+							validateApplicationBandwidthUsageRestrictions();
+						} 
+						catch (UsageRestrictionException e) 
+						{
+							closeAllClients();
+						}
+					}
+					
+				}, 0, 1000);
 			}
 		}
 		else
@@ -1018,6 +1217,8 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 	}
 	
 
+	
+	
 	/**
 	 * onAppStop
 	 * 
@@ -1027,38 +1228,55 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 		String fullname = appInstance.getApplication().getName() + "/" + appInstance.getName();
 		logger.info(MODULE_NAME+".onAppStop: " + fullname);
 
-		if (timer != null)
+		if (streamTimeLimitTimer != null)
 		{
-			timer.cancel();
+			streamTimeLimitTimer.cancel();
 		}
-		timer = null;
+		streamTimeLimitTimer = null;
 	}
 	
 
+	
+	/**
+	 * Stream create handler	 * 
+	 * @param stream
+	 */
 	public void onStreamCreate(IMediaStream stream)
 	{
 		stream.addClientListener(streamListener);
 	}
 
 	
+	
+	
+	/**
+	 * Stream destroy handler
+	 * @param stream
+	 */
 	public void onStreamDestroy(IMediaStream stream)
 	{
 		stream.removeClientListener(streamListener);
 	}
 	
 	
-	public void onRTPSessionCreate(RTPSession rtpSession) {
-		getLogger().info(MODULE_NAME+".onRTPSessionCreate: " + rtpSession.getSessionId());
+	
+	
+	/**
+	 * RTP session handler
+	 * @param rtpSession
+	 */
+	public void onRTPSessionCreate(RTPSession rtpSession) {	
 		
 		String uri = rtpSession.getUri();
 		RTPUrl url = new RTPUrl(uri);
-		String streamName = url.getStreamName();
+		String streamName = url.getStreamName();				
 		
 		streamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName, rtpSession);
-		int viewcount = getStreamViewerCounts(streamName);
+		//int viewcount = getStreamViewerCounts(streamName);
 		
 		if(restrictions.enableRestrictions)
 		{
+			/** Application bandwidth consumption check **/
 			try 
 			{
 				this.validateApplicationBandwidthUsageRestrictions();
@@ -1071,20 +1289,73 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 				
 				
 				WowzaUtils.terminateSession(appInstance, rtpSession);
+				closeAllClients();
+				return;
 			}
 		}
-
+		
+		
+		StreamingProtocols protocol = WowzaUtils.getClientProtocol(rtpSession);
+		
+		switch(protocol)
+		{
+		case RTSP:
+			rtpSession.addActionListener(rtspListener);
+			break;
+			
+		case WEBRTC:
+			WebRTCJSONStr data = new Gson().fromJson(rtpSession.getWebRTCSession().getCommandRequest().getJSONStr(), WebRTCJSONStr.class);
+			WMSProperties props = rtpSession.getProperties();
+			
+			// if we have properties object set new properties
+			if(props != null)
+			{
+				synchronized(props)
+				{
+					if(moduleDebug) {
+						logger.info(MODULE_NAME+".onPlay => setting properties `subscriber` &`protocol` => "+protocol+" on session");
+					}					
+				
+					if(data.direction.toLowerCase().equals(WebRTCDirections.PUBLISH))
+					{
+						props.setProperty(KEY_PUBLISHER, true);
+						props.setProperty(KEY_PUBLISH_TIME, System.currentTimeMillis());
+						props.setProperty(KEY_PUBLISH_PROTOCOL, protocol);
+					}
+					
+					if(data.direction.toLowerCase().equals(WebRTCDirections.PLAY))
+					{
+						props.setProperty(KEY_SUBSCRIBER, true);
+						props.setProperty(KEY_SUBSCRIBE_TIME, System.currentTimeMillis());
+						props.setProperty(KEY_SUBSCRIBE_PROTOCOL, protocol);
+					}
+				}
+			}			
+			break;
+			
+		default:
+			logger.info("Unexpected protocol " + String.valueOf(protocol));
+			break;
+		}
 	}
 	
 	
+	
+	
+	
+	
+	/**
+	 * HTTPSession handler
+	 * @param httpSession
+	 */
 	public void onHTTPSessionCreate(IHTTPStreamerSession httpSession) {
 		getLogger().info(MODULE_NAME+".onHTTPSessionCreate: " + httpSession.getSessionId());
-		
+				
 		String streamName = httpSession.getStreamName();
-		int count = getStreamViewerCounts(streamName);
 		
 		if(restrictions.enableRestrictions)
-		{
+		{				
+			/** Application bandwidth consumption check **/
 			try 
 			{
 				this.validateApplicationBandwidthUsageRestrictions();
@@ -1095,19 +1366,69 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session as usage restrictions were violated(" + e.getMessage() + ").");
 				}
 				
+				
 				WowzaUtils.terminateSession(appInstance, httpSession);
+				closeAllClients();
+				return;
 			}
-		}
+			
+			
+			/** Max total viewers restriction check**/
+			try
+			{
+				validateMaxViewerRestrictions();
+			}
+			catch (UsageRestrictionException e) 
+			{
+				if(moduleDebug) {
+					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session on max total viewer restriction violation.(" + e.getMessage() + ").");
+				}
+				
+				WowzaUtils.terminateSession(appInstance, httpSession);
+				addSession(new StreamingSessionTarget(appInstance, httpSession));
+			}
+			
+			
+			
+			/** Max viewers per stream restriction check**/
+			try
+			{
+				String truStreamName = ((ApplicationInstance)appInstance).internalResolvePlayAlias(streamName);
+				validateMaxViewerRestrictionsPerStream(truStreamName);
+			}
+			catch (UsageRestrictionException e) 
+			{
+				if(moduleDebug) {
+					logger.info(MODULE_NAME + ".onHTTPSessionCreate => rejecting session on max viewer per stream restriction violation for stream "+ streamName +"(" + e.getMessage() + ").");
+				}
+				
+				WowzaUtils.terminateSession(appInstance, httpSession);
+				addSession(new StreamingSessionTarget(appInstance, httpSession));
+			}
+						
+		}		
+		
+		
 	}
 	
 
+	
+	
+	/**
+	 * Connect handler
+	 * 
+	 * @param client
+	 * @param function
+	 * @param params
+	 */
 	public void onConnect(IClient client, RequestFunction function, AMFDataList params) {
 		logger.info(MODULE_NAME+".onConnect: " + client.getClientId());
-		
+				
 		if(restrictions.enableRestrictions)
 		{
 			if(WowzaUtils.isRTMPClient(client))
-			{
+			{				
+				/** Application bandwidth consumption check **/
 				try 
 				{
 					this.validateApplicationBandwidthUsageRestrictions();
@@ -1119,8 +1440,160 @@ public class ModuleSimpleUsageControl extends ModuleBase {
 					}
 					
 					WowzaUtils.terminateSession(appInstance, client);
+					closeAllClients();
+					return;
 				}
 			}
 		}
 	}
+	
+	
+	
+	public void closeAllClients()
+	{
+		/**
+		 * Checking RTMP clients 
+		 */
+		Iterator<IClient> clients = appInstance.getClients().iterator();
+		while (clients.hasNext())
+		{
+			IClient client = clients.next();
+			client.setShutdownClient(true);			
+		}
+
+		
+		
+		/**
+		 * Testing HLS clients
+		 */
+		Iterator<IHTTPStreamerSession> httpSessions = appInstance.getHTTPStreamerSessions().iterator();
+		while (httpSessions.hasNext())
+		{
+			IHTTPStreamerSession httpSession = httpSessions.next();
+			httpSession.rejectSession();
+			httpSession.shutdown();
+		}
+
+		
+		
+		/**
+		 * Checking RTP clients (RTSP & WebRTC)
+		 */
+		Iterator<RTPSession> rtpSessions = appInstance.getRTPSessions().iterator();
+		while (rtpSessions.hasNext())
+		{
+			RTPSession rtpSession = rtpSessions.next();			
+			appInstance.getVHost().getRTPContext().shutdownRTPSession(rtpSession);
+		}
+	}
+	
+
+
+	@Override
+	public void addSession(StreamingSessionTarget session) 
+	{
+		String sessionId = null;
+		
+		StreamingProtocols protocol = session.getProtocol();
+		switch(protocol)
+		{
+			case RTMP:
+				IClient rclient = (IClient) session.getTarget();
+				sessionId = WowzaUtils.getUniqueIdentifier(rclient);
+				rtmpSessionCache.put(System.currentTimeMillis(), sessionId);
+				break;
+			
+			case HTTP:
+				IHTTPStreamerSession hclient  = (IHTTPStreamerSession) session.getTarget();
+				sessionId = hclient.getSessionId();
+				httpSessionCache.put(System.currentTimeMillis(), sessionId);
+				break;
+				
+		default:
+				logger.debug("Protocol not applicable for session tracking");
+			break;
+		}
+	}
+
+
+
+
+
+	@Override
+	public boolean hasSession(StreamingSessionTarget session) {
+		
+		String sessionId = null;
+		StreamingProtocols protocol = session.getProtocol();
+		switch(protocol)
+		{
+			case RTMP:
+				IClient rclient = (IClient) session.getTarget();
+				sessionId = WowzaUtils.getUniqueIdentifier(rclient);
+				for(Iterator<Entry<Long, String>> iter = rtmpSessionCache.entrySet().iterator(); iter.hasNext(); ) 
+				{
+				    if (iter.next().getValue().equalsIgnoreCase(sessionId))
+					{
+				    	return true;
+					}
+				}
+				break;
+			
+			case HTTP:
+				IHTTPStreamerSession hclient  = (IHTTPStreamerSession) session.getTarget();
+				sessionId = hclient.getSessionId();
+				for(Iterator<Entry<Long, String>> iter = httpSessionCache.entrySet().iterator(); iter.hasNext(); ) 
+				{
+				    if (iter.next().getValue().equalsIgnoreCase(sessionId))
+					{
+				    	return true;
+					}
+				}
+				break;
+			
+			default:
+				logger.debug("Protocol not applicable for session tracking");
+				break;
+		}
+		
+		return false;
+	}
+
+
+
+
+
+	@Override
+	public void clearSessions() 
+	{
+		// clear expired HTTP session values from sessionCache
+		long httpSessionlimit = System.currentTimeMillis() - sessionCacheDuration;
+		for(Iterator<Long> iter = httpSessionCache.keySet().iterator(); iter.hasNext(); ) 
+		{
+		    if (iter.next() <= httpSessionlimit)
+			{
+		    	iter.remove();
+			}
+			else
+			{
+				break;
+			}
+		}	
+		
+		
+		// clear expired RTMP session values from sessionCache
+		long rtmpSessionlimit = System.currentTimeMillis() - sessionCacheDuration;
+		for(Iterator<Long> iter = rtmpSessionCache.keySet().iterator(); iter.hasNext(); ) 
+		{
+		    if (iter.next() <= rtmpSessionlimit)
+			{
+		    	iter.remove();
+			}
+			else
+			{
+				break;
+			}
+		}	
+		
+	}
+	
 }

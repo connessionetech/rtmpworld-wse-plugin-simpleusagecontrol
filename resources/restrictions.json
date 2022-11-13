@@ -1,19 +1,19 @@
 {
 	"enableRestrictions": true,
-	"maxBytesIn": 0,
-	"maxBytesOut": 0,
+	"maxMegaBytesIn": 0,
+	"maxMegaBytesOut": 0,
 	"ingest": {
-		"maxPublishBitrate": 1000,
-		"maxPublishersCount": 2,
+		"maxPublishBitrate": 0,
+		"maxPublishersCount": 0,
 		"maxPublishTime": 0,
-		"allowedFromGeo": ["IN"],
+		"allowedFromGeo": ["*"],
 		"restrictFromGeo": []
 	},
 	"egress": {
-		"maxSubscribers": 10,
-		"maxSubscribersPerStream": 10,
-		"maxPlaybackTime": 45,
-		"allowedFromGeo": [],
+		"maxSubscribers": 0,
+		"maxSubscribersPerStream": 0,
+		"maxPlaybackTime": 0,
+		"allowedFromGeo": ["*"],
 		"restrictFromGeo": []
 	}
 }

@@ -6,6 +6,7 @@ import com.rtmpworld.server.wowza.ModuleSimpleUsageControl;
 import com.rtmpworld.server.wowza.usagecontrol.CountryInfo;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
+import com.wowza.wms.logging.WMSLogger;
 import com.wowza.wms.logging.WMSLoggerFactory;
 
 import java.io.IOException;
@@ -17,6 +18,8 @@ import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 
 public class IPWhoIsWebServiceGeoInfoProvider implements IGeoInfoProvider {
+	
+	WMSLogger logger;
 	
 	String licenseKey;
 	private static String ENDPOINT = "http://ipwho.is/%s";
@@ -107,6 +110,18 @@ public class IPWhoIsWebServiceGeoInfoProvider implements IGeoInfoProvider {
 			
 		}	
 		
+	}
+
+
+
+	@Override
+	public void setLogger(WMSLogger logger) {
+		this.logger = logger;
+	}
+
+	@Override
+	public WMSLogger getLogger() {
+		return logger;
 	}
 
 }

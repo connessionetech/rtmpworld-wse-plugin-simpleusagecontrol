@@ -34,6 +34,8 @@ public class StreamBitrateMonitor {
 	private boolean debug;
 	IApplicationInstance appInstance;
 	
+	
+	
 	public StreamBitrateMonitor(IMediaStream stream, double maxBitrate, IApplicationInstance appInstance, WMSLogger logger, boolean debug)
 	{
 		this.appInstance = appInstance;
@@ -60,7 +62,7 @@ public class StreamBitrateMonitor {
 					
 				if (debug) {
 					logger.info(ModuleSimpleUsageControl.MODULE_NAME + ".MonitorStream.run '" + target.getName() + "' BitRate: " + Math.round(Math.floor(bitrate)) + "kbs, MaxBitrate:" + maxBitrate, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
-					logger.info(ModuleSimpleUsageControl.MODULE_NAME + ".MonitorStream.run getPublishBitrateVideo = '" + target.getPublishBitrateVideo(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+					logger.debug(ModuleSimpleUsageControl.MODULE_NAME + ".MonitorStream.run stream -> getPublishBitrateVideo = '" + target.getPublishBitrateVideo(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
 				}
 
 				if (bitrate > maxBitrate && maxBitrate > 0)

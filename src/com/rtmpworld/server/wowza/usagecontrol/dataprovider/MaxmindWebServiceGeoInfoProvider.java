@@ -9,12 +9,15 @@ import com.rtmpworld.server.wowza.ModuleSimpleUsageControl;
 import com.rtmpworld.server.wowza.usagecontrol.CountryInfo;
 import com.rtmpworld.server.wowza.usagecontrol.exceptions.GeoInfoException;
 import com.rtmpworld.server.wowza.usagecontrol.interfaces.IGeoInfoProvider;
+import com.wowza.wms.logging.WMSLogger;
 import com.wowza.wms.logging.WMSLoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
 
 public class MaxmindWebServiceGeoInfoProvider implements IGeoInfoProvider {
+	
+	WMSLogger logger;
 	
 	WebServiceClient client;
 	String licenseKey;
@@ -72,6 +75,16 @@ public class MaxmindWebServiceGeoInfoProvider implements IGeoInfoProvider {
 
 	public void setLicenseKey(String licenseKey) {
 		this.licenseKey = licenseKey;
+	}
+
+	@Override
+	public void setLogger(WMSLogger logger) {
+		this.logger = logger;
+	}
+
+	@Override
+	public WMSLogger getLogger() {
+		return logger;
 	}
 
 }
