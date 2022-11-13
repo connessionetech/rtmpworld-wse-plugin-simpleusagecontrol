@@ -1266,6 +1266,7 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 				
 				WowzaUtils.terminateSession(appInstance, rtpSession);
 				closeAllClients();
+				return;
 			}
 		}
 		
@@ -1344,6 +1345,7 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 				
 				WowzaUtils.terminateSession(appInstance, httpSession);
 				closeAllClients();
+				return;
 			}
 			
 			
@@ -1415,6 +1417,7 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 					
 					WowzaUtils.terminateSession(appInstance, client);
 					closeAllClients();
+					return;
 				}
 			}
 		}
