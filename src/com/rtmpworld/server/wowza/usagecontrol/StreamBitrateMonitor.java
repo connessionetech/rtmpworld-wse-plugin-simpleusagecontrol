@@ -61,7 +61,7 @@ public class StreamBitrateMonitor {
 				Double bitrate = perf.getMessagesInBytesRate() * 8 * .001;
 					
 				if (debug) {
-					logger.info(ModuleSimpleUsageControl.MODULE_NAME + ".MonitorStream.run '" + target.getName() + "' BitRate: " + Math.round(Math.floor(bitrate)) + "kbs, MaxBitrate:" + maxBitrate, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
+					logger.debug(ModuleSimpleUsageControl.MODULE_NAME + ".MonitorStream.run '" + target.getName() + "' BitRate: " + Math.round(Math.floor(bitrate)) + "kbs, MaxBitrate:" + maxBitrate, WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
 					logger.debug(ModuleSimpleUsageControl.MODULE_NAME + ".MonitorStream.run stream -> getPublishBitrateVideo = '" + target.getPublishBitrateVideo(), WMSLoggerIDs.CAT_application, WMSLoggerIDs.EVT_comment);
 				}
 
