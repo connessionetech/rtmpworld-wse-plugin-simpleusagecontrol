@@ -9,7 +9,7 @@ The **ModuleSimpleUsageControl** module for Wowza Streaming Engine™ media serv
 # Dependency Note
 ---
 
-This module is dependent on the [RTMPWorld Shared Library For Wowza Streaming Engine](https://rtmpworld.com/product/shared-libraries-for-wowza-streaming-engine/). Please follow documentation on how to download & install the dependency jar on your Wowza Streaming Engine.
+This module is dependent on the [RTMPWorld Shared Library For Wowza Streaming Engine](https://rtmpworld.com/product/rtmpworld-wowza-streaming-engine-utilities/). Please follow documentation on how to download & install the dependency jar on your Wowza Streaming Engine.
 
 This library is required to be in your classpath if you plan on compiling the plugin on your own in your favourite IDE.
 

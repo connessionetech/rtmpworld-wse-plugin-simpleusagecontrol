@@ -2,11 +2,13 @@
 <project name="rtmpworld-wse-plugin-simpleusagecontrol" default="jar" basedir="..">
 	
 	<property name="wowza.lib.dir" value="C:/Program Files/Wowza Media Systems/Wowza_Streaming_Engine_4_8_20_1/lib"/>
-	<property name="jar.filename" value="rtmpworld-wse-plugin-simpleusagecontrol.jar"/>
+	<property name="jar.filename" value="rtmpworld-wse-plugin-simpleusagecontrol"/>
 	<property name="core.build.dir" value="bin"/>
+	<property name="jar.version" value="0.0.1"/>
+	<property name="jar.output" value="${jar.filename}-${jar.version}.jar"/>
 
 	<target name="jar">
-		<jar jarfile="${wowza.lib.dir}/${jar.filename}">
+		<jar jarfile="${wowza.lib.dir}/${jar.output}">
 			<fileset dir="${core.build.dir}"/>
 		</jar>
 	</target>
