@@ -408,8 +408,8 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 		double megaBytesOut = bytesOut/1048576;
 		
 		if(moduleDebug) {
-			logger.info("megaBytesIn = " + String.valueOf(megaBytesIn) + " megaBytesOut = " + String.valueOf(megaBytesOut));
-			logger.info("maxMegaBytesIn = " + String.valueOf(restrictions.maxMegaBytesIn) + " maxMegaBytesOut = " + String.valueOf(restrictions.maxMegaBytesOut));
+			logger.debug("megaBytesIn = " + String.valueOf(megaBytesIn) + " megaBytesOut = " + String.valueOf(megaBytesOut));
+			logger.debug("maxMegaBytesIn = " + String.valueOf(restrictions.maxMegaBytesIn) + " maxMegaBytesOut = " + String.valueOf(restrictions.maxMegaBytesOut));
 		}
 		
 		if((restrictions.maxMegaBytesIn>0) && (bytesIn > restrictions.maxMegaBytesIn))
@@ -1349,12 +1349,25 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 	 * @param httpSession
 	 */
 	public void onHTTPSessionCreate(IHTTPStreamerSession httpSession) {
-		getLogger().info(MODULE_NAME+".onHTTPSessionCreate: " + httpSession.getSessionId());
 				
 		String streamName = httpSession.getStreamName();
 		
 		if(restrictions.enableRestrictions)
-		{				
+		{	
+			
+			/* If client session was rejected recently keep it blocked */				
+			if(this.hasSession(new StreamingSessionTarget(appInstance, httpSession))) {
+				
+				if(moduleDebug) {
+					logger.info("Rejecting session as it was recently rejected due to restrictions");
+				}
+				
+				WowzaUtils.terminateSession(appInstance, httpSession);
+				return;
+			}
+			
+			
+			
 			/** Application bandwidth consumption check **/
 			try 
 			{
@@ -1422,12 +1435,24 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 	 * @param params
 	 */
 	public void onConnect(IClient client, RequestFunction function, AMFDataList params) {
-		logger.info(MODULE_NAME+".onConnect: " + client.getClientId());
 				
 		if(restrictions.enableRestrictions)
 		{
 			if(WowzaUtils.isRTMPClient(client))
-			{				
+			{			
+				
+				/* If client session was rejected recently keep it blocked */				
+				if(this.hasSession(new StreamingSessionTarget(appInstance, client))) {
+					
+					if(moduleDebug) {
+						logger.info("Rejecting session as it was recently rejected due to restrictions");
+					}
+					
+					WowzaUtils.terminateSession(appInstance, client);
+					return;
+				}
+				
+				
 				/** Application bandwidth consumption check **/
 				try 
 				{
@@ -1500,12 +1525,18 @@ public class ModuleSimpleUsageControl extends ModuleBase implements IClientSessi
 			case RTMP:
 				IClient rclient = (IClient) session.getTarget();
 				sessionId = WowzaUtils.getUniqueIdentifier(rclient);
+				if(moduleDebug) {
+					logger.info("Adding rtmp client sessionid "+sessionId+" to cache");
+				}
 				rtmpSessionCache.put(System.currentTimeMillis(), sessionId);
 				break;
 			
 			case HTTP:
 				IHTTPStreamerSession hclient  = (IHTTPStreamerSession) session.getTarget();
 				sessionId = hclient.getSessionId();
+				if(moduleDebug) {
+					logger.info("Adding http client sessionid "+sessionId+" to cache");
+				}
 				httpSessionCache.put(System.currentTimeMillis(), sessionId);
 				break;
 				
