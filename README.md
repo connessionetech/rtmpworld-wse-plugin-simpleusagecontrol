@@ -17,3 +17,8 @@ This library is required to be in your classpath if you plan on compiling the pl
 ---
 
 The detailed documentation on the subject can be found [here](https://rtmpworld.com/blog/controlling-limiting-the-usage-of-your-wowza-server-application/).
+
+## NOTE: 
+---
+
+The application codebase is inspired from old plugins at [WowzaMediaSystems github page] (https://github.com/WowzaMediaSystems)
